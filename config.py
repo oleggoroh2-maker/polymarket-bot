@@ -1,0 +1,27 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = int(os.getenv("CHAT_ID"))
+# ---------- AUTO SCAN ----------
+
+SCAN_INTERVAL = 300      # 5 минут
+
+AUTO_ALERTS = True
+
+ONLY_IMPORTANT_ALERTS = True
+
+AUTO_VALUE_ALERTS = False
+
+STRONG_DIP_PERCENT = -30
+STRONG_PUMP_PERCENT = 30
+
+MIN_ABSOLUTE_MOVE = 0.02
+
+VALUE_MAX_PRICE = 0.03
+VALUE_MIN_LIQUIDITY = 500_000
+VALUE_MIN_SCORE = 80
+
+ALERT_COOLDOWN_HOURS = 24

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+venv/
+.env
+
+# macOS
+.DS_Store
+
+# Database
+data/polymarket.db
+data/*.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+
+# Environment
+.env.local
