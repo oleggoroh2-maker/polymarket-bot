@@ -156,8 +156,13 @@ def detect_strong_dip(
         old_price,
     )
 
-    if change > STRONG_DIP_PERCENT:
-        return None
+    if current_price <= 0.01:
+    required_move = 0.002   # 0.2¢ для дешёвых рынков
+else:
+    required_move = 0.02    # 2¢ для остальных
+
+if move < required_move:
+    return None
 
     if move < MIN_ABSOLUTE_MOVE:
         return None
@@ -195,8 +200,13 @@ def detect_strong_pump(
     if change < STRONG_PUMP_PERCENT:
         return None
 
-    if move < MIN_ABSOLUTE_MOVE:
-        return None
+    if current_price <= 0.01:
+    required_move = 0.002   # 0.2¢ для дешёвых рынков
+else:
+    required_move = 0.02    # 2¢ для остальных
+
+if move < required_move:
+    return None
 
     return {
         "alert_type": (
