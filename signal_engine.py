@@ -22,16 +22,28 @@ STRONG_PUMP_PERCENT = getattr(
     30.0,
 )
 
-MIN_ABSOLUTE_MOVE = getattr(
+CHEAP_MARKET_MAX_PRICE = getattr(
     config,
-    "MIN_ABSOLUTE_MOVE",
-    0.02,  # 2 цента
+    "CHEAP_MARKET_MAX_PRICE",
+    0.01,  # до 1¢
+)
+
+CHEAP_MARKET_MIN_MOVE = getattr(
+    config,
+    "CHEAP_MARKET_MIN_MOVE",
+    0.002,  # минимум 0.2¢
+)
+
+NORMAL_MARKET_MIN_MOVE = getattr(
+    config,
+    "NORMAL_MARKET_MIN_MOVE",
+    0.02,  # минимум 2¢
 )
 
 VALUE_MAX_PRICE = getattr(
     config,
     "VALUE_MAX_PRICE",
-    0.03,  # 3 цента
+    0.03,
 )
 
 VALUE_MIN_LIQUIDITY = getattr(
@@ -58,6 +70,7 @@ AUTO_VALUE_ALERTS = getattr(
     False,
 )
 
+
 # ---------------- HELPERS ----------------
 
 def absolute_move(
@@ -68,6 +81,27 @@ def absolute_move(
         return 0.0
 
     return abs(current_price - old_price)
+
+
+def required_absolute_move(
+    current_price: float,
+    old_price: Optional[float],
+) -> float:
+    """
+    Для дешёвых рынков используем меньший абсолютный порог.
+
+    Рынок считается дешёвым, если текущая или предыдущая
+    цена не превышает 1¢.
+    """
+    reference_price = max(
+        current_price,
+        old_price or 0.0,
+    )
+
+    if reference_price <= CHEAP_MARKET_MAX_PRICE:
+        return CHEAP_MARKET_MIN_MOVE
+
+    return NORMAL_MARKET_MIN_MOVE
 
 
 def get_timeframes(
@@ -108,6 +142,7 @@ def find_strongest_drop(
         item
         for item in get_timeframes(signal)
         if item["change"] is not None
+        and item["old_price"] is not None
     ]
 
     if not valid:
@@ -126,6 +161,7 @@ def find_strongest_pump(
         item
         for item in get_timeframes(signal)
         if item["change"] is not None
+        and item["old_price"] is not None
     ]
 
     if not valid:
@@ -148,23 +184,25 @@ def detect_strong_dip(
         return None
 
     change = float(timeframe["change"])
-    old_price = timeframe["old_price"]
+    old_price = float(timeframe["old_price"])
     current_price = float(signal["price"])
+
+    # Например, при пороге -30:
+    # -50 проходит, а -20 не проходит.
+    if change > STRONG_DIP_PERCENT:
+        return None
 
     move = absolute_move(
         current_price,
         old_price,
     )
 
-    if current_price <= 0.01:
-    required_move = 0.002   # 0.2¢ для дешёвых рынков
-else:
-    required_move = 0.02    # 2¢ для остальных
+    required_move = required_absolute_move(
+        current_price,
+        old_price,
+    )
 
-if move < required_move:
-    return None
-
-    if move < MIN_ABSOLUTE_MOVE:
+    if move < required_move:
         return None
 
     return {
@@ -177,6 +215,7 @@ if move < required_move:
         "old_price": old_price,
         "current_price": current_price,
         "absolute_move": move,
+        "required_move": required_move,
     }
 
 
@@ -189,24 +228,24 @@ def detect_strong_pump(
         return None
 
     change = float(timeframe["change"])
-    old_price = timeframe["old_price"]
+    old_price = float(timeframe["old_price"])
     current_price = float(signal["price"])
+
+    if change < STRONG_PUMP_PERCENT:
+        return None
 
     move = absolute_move(
         current_price,
         old_price,
     )
 
-    if change < STRONG_PUMP_PERCENT:
+    required_move = required_absolute_move(
+        current_price,
+        old_price,
+    )
+
+    if move < required_move:
         return None
-
-    if current_price <= 0.01:
-    required_move = 0.002   # 0.2¢ для дешёвых рынков
-else:
-    required_move = 0.02    # 2¢ для остальных
-
-if move < required_move:
-    return None
 
     return {
         "alert_type": (
@@ -218,6 +257,7 @@ if move < required_move:
         "old_price": old_price,
         "current_price": current_price,
         "absolute_move": move,
+        "required_move": required_move,
     }
 
 
@@ -242,18 +282,17 @@ def detect_value(
         "alert_label": "💎 VALUE OPPORTUNITY",
         "timeframe": None,
         "change_percent": None,
-        "old_price": signal.get(
-            "previous_price"
-        ),
+        "old_price": signal.get("previous_price"),
         "current_price": price,
         "absolute_move": 0.0,
+        "required_move": 0.0,
     }
 
 
 def detect_alerts(
     signal: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    alerts = []
+    alerts: list[dict[str, Any]] = []
 
     dip = detect_strong_dip(signal)
 
@@ -264,8 +303,6 @@ def detect_alerts(
 
     if pump is not None:
         alerts.append(pump)
-
-    value = detect_value(signal)
 
     if AUTO_VALUE_ALERTS:
         value = detect_value(signal)
@@ -281,11 +318,10 @@ def detect_alerts(
 def check_signals(
     signals: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    new_alerts = []
+    new_alerts: list[dict[str, Any]] = []
 
     for signal in signals:
         market_id = str(signal["id"])
-
         detected = detect_alerts(signal)
 
         for alert_data in detected:
@@ -325,9 +361,8 @@ def check_signals(
                 0,
             ),
             -abs(
-                item.get(
-                    "change_percent"
-                ) or 0
+                item.get("change_percent")
+                or 0
             ),
             -item["score"],
         )
@@ -349,12 +384,14 @@ def format_alert(
     ]
 
     old_price = alert.get("old_price")
-    current_price = alert["current_price"]
+    current_price = float(
+        alert["current_price"]
+    )
 
     if old_price is not None:
         lines.append(
             "💰 Цена: "
-            f"{old_price * 100:.2f}¢ → "
+            f"{float(old_price) * 100:.2f}¢ → "
             f"{current_price * 100:.2f}¢"
         )
     else:
@@ -379,8 +416,10 @@ def format_alert(
 
     lines.extend(
         [
-            f"💧 Ликвидность: "
-            f"${alert['liquidity']:,.0f}",
+            (
+                "💧 Ликвидность: "
+                f"${alert['liquidity']:,.0f}"
+            ),
             f"⭐ Score: {alert['score']}/100",
             f"🏷 {alert['category']}",
             f"⏳ {alert['days_left']} дней",
@@ -400,6 +439,8 @@ def format_alert(
     return "\n".join(lines)
 
 
+# ---------------- MANUAL TEST ----------------
+
 if __name__ == "__main__":
     from scanner import scan
 
@@ -407,7 +448,7 @@ if __name__ == "__main__":
     alerts = check_signals(markets)
 
     print(
-        f"\nНовых важных алертов: "
+        "\nНовых важных алертов: "
         f"{len(alerts)}\n"
     )
 
