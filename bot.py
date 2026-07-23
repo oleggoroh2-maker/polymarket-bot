@@ -3,6 +3,7 @@ import logging
 from typing import Any, Optional
 
 from telegram import ReplyKeyboardMarkup, Update
+from telegram.error import BadRequest, Forbidden
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -12,6 +13,14 @@ from telegram.ext import (
 )
 
 import config
+from database import (
+    add_subscriber,
+    disable_subscriber,
+    get_active_subscribers,
+    get_subscribers_count,
+    init_db,
+    is_subscriber_active,
+)
 from scanner import scan
 from signal_engine import check_signals, format_alert
 
@@ -45,7 +54,8 @@ keyboard = ReplyKeyboardMarkup(
     [
         ["🔍 Сканировать", "⭐ Лучшая сделка"],
         ["📊 ТОП-5", "📈 Статистика"],
-        ["🔔 Авто-режим", "ℹ Помощь"],
+        ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
+        ["ℹ Помощь"],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -104,6 +114,21 @@ async def run_scan_in_thread() -> list[dict[str, Any]]:
     return await asyncio.to_thread(scan)
 
 
+async def subscribe_current_chat(update: Update) -> None:
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if chat is None:
+        return
+
+    await asyncio.to_thread(
+        add_subscriber,
+        chat.id,
+        user.username if user else None,
+        user.first_name if user else None,
+    )
+
+
 # ---------------- START ----------------
 
 async def start(
@@ -113,16 +138,12 @@ async def start(
     if update.message is None:
         return
 
-    status = (
-        "включён ✅"
-        if AUTO_ALERTS
-        else "выключен ❌"
-    )
+    await subscribe_current_chat(update)
 
     await update.message.reply_text(
         "🤖 Polymarket Scanner запущен\n\n"
-        f"Автоматический мониторинг: {status}\n"
-        f"Интервал: {SCAN_INTERVAL // 60} мин.\n\n"
+        "🔔 Автоматические уведомления включены.\n"
+        f"Интервал проверки: {SCAN_INTERVAL // 60} минут.\n\n"
         "Выберите действие 👇",
         reply_markup=keyboard,
     )
@@ -271,6 +292,9 @@ async def stats_action(
 
     try:
         signals = await run_scan_in_thread()
+        subscribers_count = await asyncio.to_thread(
+            get_subscribers_count
+        )
 
     except Exception as error:
         logger.exception(
@@ -323,7 +347,8 @@ async def stats_action(
         f"Средний Score: {average_score:.1f}\n"
         f"📉 Падения: {dips}\n"
         f"🚀 Рост: {pumps}\n"
-        f"🆕 Без истории: {new_markets}"
+        f"🆕 Без истории: {new_markets}\n"
+        f"🔔 Активных подписчиков: {subscribers_count}"
     )
 
 
@@ -369,19 +394,47 @@ async def auto_scan_job(
         len(alerts),
     )
 
-    for alert in alerts:
-        try:
-            await context.bot.send_message(
-                chat_id=config.CHAT_ID,
-                text=format_alert(alert),
-                disable_web_page_preview=True,
-            )
+    subscribers = await asyncio.to_thread(
+        get_active_subscribers
+    )
 
-        except Exception:
-            logger.exception(
-                "Не удалось отправить алерт: %s",
-                alert.get("title"),
-            )
+    if not subscribers:
+        logger.info("Активных подписчиков нет")
+        return
+
+    for alert in alerts:
+        alert_text = format_alert(alert)
+
+        for chat_id in subscribers:
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=alert_text,
+                    disable_web_page_preview=True,
+                )
+
+            except Forbidden:
+                logger.warning(
+                    "Пользователь %s заблокировал бота",
+                    chat_id,
+                )
+                await asyncio.to_thread(
+                    disable_subscriber,
+                    chat_id,
+                )
+
+            except BadRequest as error:
+                logger.warning(
+                    "Не удалось отправить сообщение %s: %s",
+                    chat_id,
+                    error,
+                )
+
+            except Exception:
+                logger.exception(
+                    "Ошибка отправки алерта подписчику %s",
+                    chat_id,
+                )
 
 
 # ---------------- BUTTONS ----------------
@@ -407,30 +460,49 @@ async def handle_buttons(
     elif text == "📈 Статистика":
         await stats_action(update, context)
 
-    elif text == "🔔 Авто-режим":
-        status = (
-            "✅ Включён"
-            if AUTO_ALERTS
-            else "❌ Выключен"
+    elif text == "🔔 Включить уведомления":
+        await subscribe_current_chat(update)
+        await update.message.reply_text(
+            "🔔 Автоматические уведомления включены."
+        )
+
+    elif text == "🔕 Отключить уведомления":
+        chat = update.effective_chat
+
+        if chat is None:
+            return
+
+        await asyncio.to_thread(
+            disable_subscriber,
+            chat.id,
         )
 
         await update.message.reply_text(
-            "🔔 Автоматический мониторинг\n\n"
-            f"Статус: {status}\n"
-            f"Интервал: {SCAN_INTERVAL // 60} минут\n\n"
-            "Автоматически отправляются только:\n"
-            "🔴 STRONG DIP\n"
-            "🚀 STRONG PUMP"
+            "🔕 Автоматические уведомления отключены.\n"
+            "Ручное сканирование продолжит работать."
         )
 
     elif text == "ℹ Помощь":
+        chat = update.effective_chat
+        active = False
+
+        if chat is not None:
+            active = await asyncio.to_thread(
+                is_subscriber_active,
+                chat.id,
+            )
+
+        status = "включены ✅" if active else "отключены ❌"
+
         await update.message.reply_text(
             "🤖 Управление ботом\n\n"
             "🔍 Сканировать — ручной анализ\n"
             "⭐ Лучшая сделка — лучший рынок\n"
             "📊 ТОП-5 — пять лучших рынков\n"
             "📈 Статистика — сводка\n"
-            "🔔 Авто-режим — статус мониторинга",
+            "🔔 Включить уведомления — подписаться\n"
+            "🔕 Отключить уведомления — отписаться\n\n"
+            f"Ваши автоуведомления: {status}",
             reply_markup=keyboard,
         )
 
@@ -456,6 +528,11 @@ async def error_handler(
 # ---------------- MAIN ----------------
 
 def main() -> None:
+    init_db()
+
+    if config.CHAT_ID is not None:
+        add_subscriber(config.CHAT_ID)
+
     application = (
         Application.builder()
         .token(config.BOT_TOKEN)

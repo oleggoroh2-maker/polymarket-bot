@@ -56,6 +56,19 @@ def init_db() -> None:
             """
         )
 
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS subscribers (
+                chat_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
         connection.commit()
 
 
@@ -291,6 +304,100 @@ def cleanup_alerts(days: int = 30) -> None:
         )
 
         connection.commit()
+
+
+def add_subscriber(
+    chat_id: int,
+    username: Optional[str] = None,
+    first_name: Optional[str] = None,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+
+    with closing(get_connection()) as connection:
+        connection.execute(
+            """
+            INSERT INTO subscribers (
+                chat_id,
+                username,
+                first_name,
+                is_active,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, 1, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name,
+                is_active = 1,
+                updated_at = excluded.updated_at
+            """,
+            (
+                int(chat_id),
+                username,
+                first_name,
+                now,
+                now,
+            ),
+        )
+        connection.commit()
+
+
+def disable_subscriber(chat_id: int) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+
+    with closing(get_connection()) as connection:
+        connection.execute(
+            """
+            UPDATE subscribers
+            SET is_active = 0,
+                updated_at = ?
+            WHERE chat_id = ?
+            """,
+            (now, int(chat_id)),
+        )
+        connection.commit()
+
+
+def is_subscriber_active(chat_id: int) -> bool:
+    with closing(get_connection()) as connection:
+        row = connection.execute(
+            """
+            SELECT is_active
+            FROM subscribers
+            WHERE chat_id = ?
+            LIMIT 1
+            """,
+            (int(chat_id),),
+        ).fetchone()
+
+    return bool(row and row[0] == 1)
+
+
+def get_active_subscribers() -> list[int]:
+    with closing(get_connection()) as connection:
+        rows = connection.execute(
+            """
+            SELECT chat_id
+            FROM subscribers
+            WHERE is_active = 1
+            ORDER BY created_at ASC
+            """
+        ).fetchall()
+
+    return [int(row[0]) for row in rows]
+
+
+def get_subscribers_count() -> int:
+    with closing(get_connection()) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM subscribers
+            WHERE is_active = 1
+            """
+        ).fetchone()
+
+    return int(row[0] if row else 0)
 
 
 # Совместимость со старым scanner.py
