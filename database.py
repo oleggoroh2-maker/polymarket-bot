@@ -73,9 +73,45 @@ def init_db() -> None:
 
 
 def save_price(market_id: str, price: float) -> None:
-    timestamp = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    current_price = float(price)
 
     with closing(get_connection()) as connection:
+        row = connection.execute(
+            """
+            SELECT price, timestamp
+            FROM prices
+            WHERE id = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (market_id,),
+        ).fetchone()
+
+        if row is not None:
+            previous_price = float(row[0])
+
+            try:
+                previous_time = datetime.fromisoformat(row[1])
+
+                if previous_time.tzinfo is None:
+                    previous_time = previous_time.replace(
+                        tzinfo=timezone.utc
+                    )
+            except (TypeError, ValueError):
+                previous_time = now - timedelta(hours=2)
+
+            price_changed = abs(
+                current_price - previous_price
+            ) >= 0.000001
+
+            hour_passed = (
+                now - previous_time
+            ) >= timedelta(hours=1)
+
+            if not price_changed and not hour_passed:
+                return
+
         connection.execute(
             """
             INSERT INTO prices (
@@ -87,13 +123,12 @@ def save_price(market_id: str, price: float) -> None:
             """,
             (
                 market_id,
-                float(price),
-                timestamp,
+                current_price,
+                now.isoformat(),
             ),
         )
 
         connection.commit()
-
 
 def get_history(
     market_id: str,
@@ -169,7 +204,7 @@ def get_latest_price(
     return float(row[0])
 
 
-def cleanup_prices(days: int = 30) -> None:
+def cleanup_prices(days: int = 7) -> None:
     border = (
         datetime.now(timezone.utc)
         - timedelta(days=days)
