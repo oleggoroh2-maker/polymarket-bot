@@ -13,6 +13,7 @@ from telegram.ext import (
 )
 
 import config
+from ai_engine import ensure_ai_schema, get_ai_stats
 from database import (
     add_subscriber,
     disable_subscriber,
@@ -78,6 +79,20 @@ def format_signal(
 ) -> str:
     lines = [
         f"⭐ Score: {signal['score']}/100",
+    ]
+
+    ai_quality = signal.get("ai_quality")
+    ai_risk = signal.get("ai_risk")
+    ml_probability = signal.get("ml_probability")
+
+    if ai_quality is not None:
+        lines.append(f"🤖 AI Quality: {int(ai_quality)}/100")
+    if ai_risk is not None:
+        lines.append(f"⚠️ AI Risk: {int(ai_risk)}/100")
+    if ml_probability is not None:
+        lines.append(f"🧠 ML: {float(ml_probability) * 100:.1f}%")
+
+    lines.extend([
         "",
         f"📊 {signal['title']}",
         "",
@@ -91,7 +106,7 @@ def format_signal(
         f"15м: {format_percent(signal.get('change_15m'))}",
         f"1ч: {format_percent(signal.get('change_1h'))}",
         f"24ч: {format_percent(signal.get('change_24h'))}",
-    ]
+    ])
 
     url = signal.get("url")
 
@@ -295,6 +310,7 @@ async def stats_action(
         subscribers_count = await asyncio.to_thread(
             get_subscribers_count
         )
+        ai_stats = await asyncio.to_thread(get_ai_stats)
 
     except Exception as error:
         logger.exception(
@@ -348,7 +364,14 @@ async def stats_action(
         f"📉 Падения: {dips}\n"
         f"🚀 Рост: {pumps}\n"
         f"🆕 Без истории: {new_markets}\n"
-        f"🔔 Активных подписчиков: {subscribers_count}"
+        f"🔔 Активных подписчиков: {subscribers_count}\n\n"
+        "🤖 AI Core\n"
+        f"Снимков рынка: {ai_stats['snapshots']}\n"
+        f"Сигналов в базе: {ai_stats['signals']}\n"
+        f"Контрольных замеров: {ai_stats['outcomes']}\n"
+        f"Обучающих примеров: {ai_stats['training_samples']}/"
+        f"{ai_stats['min_training_samples']}\n"
+        f"ML-модель: {'готова ✅' if ai_stats['model_ready'] else 'накопление данных ⏳'}"
     )
 
 
@@ -529,6 +552,7 @@ async def error_handler(
 
 def main() -> None:
     init_db()
+    ensure_ai_schema()
 
     if config.CHAT_ID is not None:
         add_subscriber(config.CHAT_ID)

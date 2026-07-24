@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 import requests
 
+from ai_engine import enrich_signal, process_scan
 from database import (
     cleanup_alerts,
     cleanup_prices,
@@ -508,6 +509,13 @@ def scan() -> list[dict[str, Any]]:
             -item["liquidity"],
         )
     )
+
+    # Rule/ML assessment is informational and does not filter markets.
+    results = [enrich_signal(item) for item in results]
+
+    # AI Engine работает в теневом режиме: ошибки внутри него
+    # логируются, но не мешают основному сканированию.
+    process_scan(results)
 
     return results
 

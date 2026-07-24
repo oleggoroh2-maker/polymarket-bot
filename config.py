@@ -9,10 +9,7 @@ CHAT_ID_RAW = (os.getenv("CHAT_ID") or "").strip()
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан")
 
-if not CHAT_ID_RAW:
-    raise ValueError("CHAT_ID не задан")
-
-CHAT_ID = int(CHAT_ID_RAW)
+CHAT_ID = int(CHAT_ID_RAW) if CHAT_ID_RAW else None
 
 SCAN_INTERVAL = 300
 AUTO_ALERTS = True
@@ -25,3 +22,8 @@ CHEAP_MARKET_MIN_MOVE = 0.002
 
 AUTO_VALUE_ALERTS = False
 ALERT_COOLDOWN_HOURS = 24
+
+# AI Engine работает в теневом режиме и не блокирует уведомления.
+AI_MIN_TRAINING_SAMPLES = 200
+AI_SUCCESS_MOVE_PERCENT = 20.0
+AI_SHOW_IN_ALERTS = True

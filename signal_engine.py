@@ -2,6 +2,7 @@ from typing import Any, Optional
 
 import config
 
+from ai_engine import enrich_signal, record_alert
 from database import (
     alert_on_cooldown,
     save_alert,
@@ -339,10 +340,18 @@ def check_signals(
                 alert_type,
             )
 
-            prepared_alert = {
-                **signal,
-                **alert_data,
-            }
+            prepared_alert = enrich_signal(
+                {
+                    **signal,
+                    **alert_data,
+                }
+            )
+
+            try:
+                prepared_alert["ai_signal_id"] = record_alert(prepared_alert)
+            except Exception:
+                # AI Data Layer не должен останавливать рабочие алерты.
+                prepared_alert["ai_signal_id"] = None
 
             new_alerts.append(
                 prepared_alert
@@ -421,6 +430,25 @@ def format_alert(
                 f"${alert['liquidity']:,.0f}"
             ),
             f"⭐ Score: {alert['score']}/100",
+        ]
+    )
+
+    if getattr(config, "AI_SHOW_IN_ALERTS", True):
+        ai_quality = alert.get("ai_quality")
+        ai_risk = alert.get("ai_risk")
+        ml_probability = alert.get("ml_probability")
+
+        if ai_quality is not None:
+            lines.append(f"🤖 AI Quality: {int(ai_quality)}/100")
+        if ai_risk is not None:
+            lines.append(f"⚠️ AI Risk: {int(ai_risk)}/100")
+        if ml_probability is not None:
+            lines.append(f"🧠 ML: {float(ml_probability) * 100:.1f}%")
+        else:
+            lines.append("🧠 ML: накопление данных")
+
+    lines.extend(
+        [
             f"🏷 {alert['category']}",
             f"⏳ {alert['days_left']} дней",
         ]
