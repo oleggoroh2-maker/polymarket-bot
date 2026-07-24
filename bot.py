@@ -24,6 +24,7 @@ from database import (
 )
 from scanner import scan
 from signal_engine import check_signals, format_alert
+from opportunity_engine import check_opportunities, format_opportunity
 
 
 logging.basicConfig(
@@ -400,6 +401,19 @@ async def auto_scan_job(
             signals,
         )
 
+        event_market_ids = {
+            str(alert.get("id"))
+            for alert in alerts
+        }
+
+        opportunities = await asyncio.to_thread(
+            check_opportunities,
+            signals,
+            event_market_ids,
+        )
+
+        alerts.extend(opportunities)
+
     except Exception:
         logger.exception(
             "Ошибка автоматического сканирования"
@@ -426,7 +440,10 @@ async def auto_scan_job(
         return
 
     for alert in alerts:
-        alert_text = format_alert(alert)
+        if alert.get("alert_type") == "AI_OPPORTUNITY":
+            alert_text = format_opportunity(alert)
+        else:
+            alert_text = format_alert(alert)
 
         for chat_id in subscribers:
             try:
