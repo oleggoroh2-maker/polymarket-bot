@@ -317,13 +317,49 @@ def get_primary_change(
     return 0.0
 
 
-def build_market_url(market: dict[str, Any]) -> Optional[str]:
-    slug = market.get("slug")
+def get_event_slug(market: dict[str, Any]) -> Optional[str]:
+    events = market.get("events")
 
-    if not slug:
+    if isinstance(events, list):
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+
+            slug = event.get("slug")
+
+            if slug:
+                return str(slug).strip()
+
+    event = market.get("event")
+
+    if isinstance(event, dict):
+        slug = event.get("slug")
+
+        if slug:
+            return str(slug).strip()
+
+    for field_name in (
+        "eventSlug",
+        "event_slug",
+    ):
+        slug = market.get(field_name)
+
+        if slug:
+            return str(slug).strip()
+
+    return None
+
+
+def build_market_url(market: dict[str, Any]) -> Optional[str]:
+    event_slug = get_event_slug(market)
+
+    if not event_slug:
         return None
 
-    return f"https://polymarket.com/event/{slug}"
+    return (
+        "https://polymarket.com/ru/event/"
+        f"{event_slug}"
+    )
 
 
 # ---------------- SCANNER ----------------
@@ -458,7 +494,10 @@ def scan() -> list[dict[str, Any]]:
             results.append(
                 {
                     "id": market_id,
-                    "slug": market.get("slug"),
+                    "slug": get_event_slug(market),
+                    "market_slug": market.get("slug"),
+                    "event_slug": get_event_slug(market),
+                    "url": build_market_url(market),
                     "title": title,
                     "price": price,
                     "previous_price": previous_price,
