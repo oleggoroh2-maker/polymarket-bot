@@ -17,8 +17,9 @@ from database import (
 
 # ---------------- SETTINGS ----------------
 
-API_URL = "https://gamma-api.polymarket.com/markets"
-API_LIMIT = 1000
+API_URL = "https://gamma-api.polymarket.com/events/keyset"
+API_LIMIT = 500
+MAX_API_PAGES = 20
 REQUEST_TIMEOUT = 30
 
 MIN_LIQUIDITY = 10
@@ -39,45 +40,107 @@ logger = logging.getLogger(__name__)
 
 def get_markets() -> list[dict[str, Any]]:
     all_markets: list[dict[str, Any]] = []
-    offset = 0
+    next_cursor: Optional[str] = None
+    page_number = 0
 
-    while True:
+    while page_number < MAX_API_PAGES:
+        params: dict[str, Any] = {
+            "closed": "false",
+            "limit": API_LIMIT,
+        }
+
+        if next_cursor:
+            params["after_cursor"] = next_cursor
+
         response = requests.get(
             API_URL,
-            params={
-                "active": "true",
-                "closed": "false",
-                "limit": API_LIMIT,
-                "offset": offset,
-            },
+            params=params,
             timeout=REQUEST_TIMEOUT,
         )
-
         response.raise_for_status()
-        page = response.json()
 
-        if not isinstance(page, list):
+        payload = response.json()
+
+        if not isinstance(payload, dict):
             raise ValueError(
-                "Polymarket API вернул данные "
-                "в неожиданном формате."
+                "Polymarket Events API вернул "
+                "данные в неожиданном формате."
             )
 
-        all_markets.extend(page)
+        events = payload.get("events")
+
+        if not isinstance(events, list):
+            raise ValueError(
+                "В ответе Polymarket отсутствует "
+                "корректный список events."
+            )
+
+        page_market_count = 0
+
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+
+            event_slug = str(
+                event.get("slug") or ""
+            ).strip()
+
+            event_end_date = event.get("endDate")
+            event_title = str(
+                event.get("title") or ""
+            ).strip()
+
+            event_markets = event.get("markets")
+
+            if not isinstance(event_markets, list):
+                continue
+
+            for market in event_markets:
+                if not isinstance(market, dict):
+                    continue
+
+                # Не изменяем исходный объект внутри event.
+                normalized_market = dict(market)
+
+                # Добавляем данные родительского события,
+                # необходимые для правильной ссылки и категории.
+                normalized_market["event_slug"] = event_slug
+                normalized_market["event_title"] = event_title
+                normalized_market["event"] = {
+                    "id": event.get("id"),
+                    "slug": event_slug,
+                    "title": event_title,
+                }
+
+                # У отдельных markets часть полей может
+                # отсутствовать — берём значения из event.
+                if not normalized_market.get("endDate"):
+                    normalized_market["endDate"] = event_end_date
+
+                all_markets.append(normalized_market)
+                page_market_count += 1
+
+        page_number += 1
+        next_cursor = payload.get("next_cursor")
 
         logger.info(
-            "API page: offset=%s, received=%s, total=%s",
-            offset,
-            len(page),
+            "Events API page=%s events=%s markets=%s total_markets=%s",
+            page_number,
+            len(events),
+            page_market_count,
             len(all_markets),
         )
 
-        if len(page) < API_LIMIT:
+        if not next_cursor or not events:
             break
 
-        offset += API_LIMIT
+    logger.info(
+        "Events API finished: pages=%s total_markets=%s",
+        page_number,
+        len(all_markets),
+    )
 
     return all_markets
-
 
 # ---------------- HELPERS ----------------
 
@@ -339,6 +402,11 @@ def get_primary_change(
 
 
 def get_event_slug(market: dict[str, Any]) -> Optional[str]:
+    direct_slug = market.get("event_slug")
+
+    if direct_slug:
+        return str(direct_slug).strip()
+
     events = market.get("events")
 
     if isinstance(events, list):
