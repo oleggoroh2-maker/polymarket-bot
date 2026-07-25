@@ -1,4 +1,5 @@
 import logging
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -556,6 +557,31 @@ def scan() -> list[dict[str, Any]]:
     # логируются, но не мешают основному сканированию.
     process_scan(results)
 
+    categories = Counter(
+        item["category"]
+        for item in results
+    )
+    
+    logger.info("========== CATEGORY STATS ==========")
+    
+    for category, count in sorted(
+        categories.items(),
+        key=lambda x: x[1],
+        reverse=True,
+    ):
+        logger.info(
+            "%s : %s",
+            category,
+            count,
+        )
+    
+    logger.info(
+        "TOTAL MARKETS: %s",
+        len(results),
+    )
+    
+    logger.info("====================================")
+    
     return results
 
 
