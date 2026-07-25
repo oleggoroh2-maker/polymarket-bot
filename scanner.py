@@ -38,25 +38,45 @@ logger = logging.getLogger(__name__)
 # ---------------- API ----------------
 
 def get_markets() -> list[dict[str, Any]]:
-    response = requests.get(
-        API_URL,
-        params={
-            "closed": "false",
-            "limit": API_LIMIT,
-        },
-        timeout=REQUEST_TIMEOUT,
-    )
+    all_markets: list[dict[str, Any]] = []
+    offset = 0
 
-    response.raise_for_status()
-
-    data = response.json()
-
-    if not isinstance(data, list):
-        raise ValueError(
-            "Polymarket API вернул данные в неожиданном формате."
+    while True:
+        response = requests.get(
+            API_URL,
+            params={
+                "active": "true",
+                "closed": "false",
+                "limit": API_LIMIT,
+                "offset": offset,
+            },
+            timeout=REQUEST_TIMEOUT,
         )
 
-    return data
+        response.raise_for_status()
+        page = response.json()
+
+        if not isinstance(page, list):
+            raise ValueError(
+                "Polymarket API вернул данные "
+                "в неожиданном формате."
+            )
+
+        all_markets.extend(page)
+
+        logger.info(
+            "API page: offset=%s, received=%s, total=%s",
+            offset,
+            len(page),
+            len(all_markets),
+        )
+
+        if len(page) < API_LIMIT:
+            break
+
+        offset += API_LIMIT
+
+    return all_markets
 
 
 # ---------------- HELPERS ----------------
