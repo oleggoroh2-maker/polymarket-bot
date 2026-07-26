@@ -327,6 +327,13 @@ def check_signals(
         if liquidity < config.MIN_ALERT_LIQUIDITY:
             continue
 
+        market_id = str(signal.get("id") or "")
+
+        if not market_id:
+            continue
+
+        detected = detect_alerts(signal)
+
         for alert_data in detected:
             alert_type = alert_data["alert_type"]
 
@@ -350,7 +357,9 @@ def check_signals(
             )
 
             try:
-                prepared_alert["ai_signal_id"] = record_alert(prepared_alert)
+                prepared_alert["ai_signal_id"] = record_alert(
+                    prepared_alert
+                )
             except Exception:
                 # AI Data Layer не должен останавливать рабочие алерты.
                 prepared_alert["ai_signal_id"] = None
@@ -380,7 +389,6 @@ def check_signals(
     )
 
     return new_alerts
-
 
 # ---------------- TELEGRAM FORMAT ----------------
 
