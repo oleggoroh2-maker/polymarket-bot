@@ -316,6 +316,27 @@ def detect_alerts(
 
 # ---------------- DEDUPLICATION ----------------
 
+def get_min_alert_liquidity(signal: dict[str, Any]) -> float:
+    category = str(signal.get("category") or "").upper()
+
+    if "POLITICS" in category:
+        return float(config.MIN_ALERT_LIQUIDITY_POLITICS)
+
+    if "CRYPTO" in category:
+        return float(config.MIN_ALERT_LIQUIDITY_CRYPTO)
+
+    if "SPORTS" in category:
+        return float(config.MIN_ALERT_LIQUIDITY_SPORTS)
+
+    if (
+        "ENTERTAINMENT" in category
+        or "CULTURE" in category
+        or "CELEBRITY" in category
+    ):
+        return float(config.MIN_ALERT_LIQUIDITY_ENTERTAINMENT)
+
+    return float(config.MIN_ALERT_LIQUIDITY_DEFAULT)
+
 def check_signals(
     signals: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -323,8 +344,9 @@ def check_signals(
 
     for signal in signals:
         liquidity = float(signal.get("liquidity") or 0)
+        min_liquidity = get_min_alert_liquidity(signal)
 
-        if liquidity < config.MIN_ALERT_LIQUIDITY:
+        if liquidity < min_liquidity:
             continue
 
         market_id = str(signal.get("id") or "")
