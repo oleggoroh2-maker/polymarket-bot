@@ -86,19 +86,6 @@ def format_signal(
     ai_risk = signal.get("ai_risk")
     ml_probability = signal.get("ml_probability")
 
-    if "opportunity_score" in alert:
-    lines.extend([
-        f"🤖 AI Quality: {int(alert.get('ai_quality') or 0)}/100",
-        f"⚠️ AI Risk: {int(alert.get('ai_risk') or 0)}/100",
-        f"🎯 Opportunity: {int(alert.get('opportunity_score') or 0)}/100",
-    ])
-
-    ml = alert.get("ml_probability")
-    if ml is not None:
-        lines.append(f"🧠 ML: {ml * 100:.1f}%")
-    else:
-        lines.append("🧠 ML: накопление данных")
-
     reasons = alert.get("opportunity_reasons") or []
     if reasons:
         lines.extend(["", "Почему рынок выделен:"])
