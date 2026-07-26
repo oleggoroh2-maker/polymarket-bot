@@ -124,33 +124,266 @@ def enrich_signal(signal: dict[str, Any]) -> dict[str, Any]:
             "features": {},
             "reasons": [],
         }
+def _percent_change(
+    current: float,
+    previous: float,
+) -> float:
+    if previous <= 0:
+        return 100.0 if current > 0 else 0.0
+
+    return abs(current - previous) / previous * 100.0
 
 
-def save_market_snapshots(markets: list[dict[str, Any]]) -> None:
+def _snapshot_interval_minutes(score: int) -> int:
+    if score >= getattr(config, "SNAPSHOT_HIGH_SCORE", 70):
+        return getattr(
+            config,
+            "SNAPSHOT_HIGH_INTERVAL_MINUTES",
+            5,
+        )
+
+    if score >= getattr(config, "SNAPSHOT_MEDIUM_SCORE", 40):
+        return getattr(
+            config,
+            "SNAPSHOT_MEDIUM_INTERVAL_MINUTES",
+            30,
+        )
+
+    return getattr(
+        config,
+        "SNAPSHOT_LOW_INTERVAL_MINUTES",
+        120,
+    )
+
+
+def _has_strong_market_move(
+    market: dict[str, Any],
+) -> bool:
+    changes = [
+        market.get("change_5m"),
+        market.get("change_15m"),
+        market.get("change_1h"),
+        market.get("change_24h"),
+    ]
+
+    strongest = max(
+        (
+            abs(float(value))
+            for value in changes
+            if value is not None
+        ),
+        default=0.0,
+    )
+
+    return strongest >= getattr(
+        config,
+        "SNAPSHOT_FORCE_MARKET_MOVE_PERCENT",
+        20.0,
+    )
+
+def save_market_snapshots(
+    markets: list[dict[str, Any]],
+) -> None:
     ensure_ai_schema()
-    captured_at = _now().replace(second=0, microsecond=0).isoformat()
-    rows = []
-    for market in markets:
-        rows.append((
-            str(market["id"]), captured_at, float(market["price"]),
-            float(market.get("liquidity") or 0), int(market.get("days_left") or 0),
-            int(market.get("score") or 0), market.get("category"), market.get("momentum"),
-            market.get("change_5m"), market.get("change_15m"),
-            market.get("change_1h"), market.get("change_24h"),
-        ))
+
+    if not markets:
+        return
+
+    now = _now().replace(
+        second=0,
+        microsecond=0,
+    )
+    captured_at = now.isoformat()
+
+    market_ids = [
+        str(market.get("id") or "")
+        for market in markets
+        if market.get("id")
+    ]
+
+    latest_by_market: dict[str, dict[str, Any]] = {}
 
     with closing(get_connection()) as connection:
+        # SQLite обычно ограничивает количество параметров,
+        # поэтому загружаем последние снимки частями.
+        chunk_size = 500
+
+        for start in range(0, len(market_ids), chunk_size):
+            chunk = market_ids[start:start + chunk_size]
+
+            if not chunk:
+                continue
+
+            placeholders = ",".join("?" for _ in chunk)
+
+            rows = connection.execute(
+                f"""
+                SELECT
+                    snapshot.market_id,
+                    snapshot.captured_at,
+                    snapshot.price,
+                    snapshot.liquidity,
+                    snapshot.score,
+                    snapshot.momentum
+                FROM market_snapshots AS snapshot
+                INNER JOIN (
+                    SELECT
+                        market_id,
+                        MAX(captured_at) AS latest_captured_at
+                    FROM market_snapshots
+                    WHERE market_id IN ({placeholders})
+                    GROUP BY market_id
+                ) AS latest
+                    ON latest.market_id = snapshot.market_id
+                    AND latest.latest_captured_at = snapshot.captured_at
+                """,
+                chunk,
+            ).fetchall()
+
+            for row in rows:
+                latest_by_market[str(row[0])] = {
+                    "captured_at": row[1],
+                    "price": float(row[2] or 0),
+                    "liquidity": float(row[3] or 0),
+                    "score": int(row[4] or 0),
+                    "momentum": str(row[5] or ""),
+                }
+
+        rows_to_insert: list[tuple[Any, ...]] = []
+
+        for market in markets:
+            market_id = str(market.get("id") or "")
+
+            if not market_id:
+                continue
+
+            price = float(market.get("price") or 0)
+            liquidity = float(
+                market.get("liquidity") or 0
+            )
+            score = int(market.get("score") or 0)
+            momentum = str(
+                market.get("momentum") or ""
+            )
+
+            previous = latest_by_market.get(market_id)
+            should_save = previous is None
+
+            if previous is not None:
+                price_change = _percent_change(
+                    price,
+                    previous["price"],
+                )
+                liquidity_change = _percent_change(
+                    liquidity,
+                    previous["liquidity"],
+                )
+
+                price_changed = price_change >= getattr(
+                    config,
+                    "SNAPSHOT_FORCE_PRICE_CHANGE_PERCENT",
+                    2.0,
+                )
+
+                liquidity_changed = (
+                    liquidity_change
+                    >= getattr(
+                        config,
+                        "SNAPSHOT_FORCE_LIQUIDITY_CHANGE_PERCENT",
+                        5.0,
+                    )
+                )
+
+                score_changed = (
+                    score != previous["score"]
+                )
+
+                momentum_changed = (
+                    momentum != previous["momentum"]
+                )
+
+                strong_move = _has_strong_market_move(
+                    market
+                )
+
+                try:
+                    previous_time = datetime.fromisoformat(
+                        str(previous["captured_at"])
+                    )
+
+                    if (
+                        previous_time.tzinfo is None
+                        and now.tzinfo is not None
+                    ):
+                        previous_time = previous_time.replace(
+                            tzinfo=now.tzinfo
+                        )
+
+                    minutes_since_last = (
+                        now - previous_time
+                    ).total_seconds() / 60
+                except (TypeError, ValueError):
+                    minutes_since_last = float("inf")
+
+                interval_reached = (
+                    minutes_since_last
+                    >= _snapshot_interval_minutes(score)
+                )
+
+                should_save = any([
+                    price_changed,
+                    liquidity_changed,
+                    score_changed,
+                    momentum_changed,
+                    strong_move,
+                    interval_reached,
+                ])
+
+            if not should_save:
+                continue
+
+            rows_to_insert.append(
+                (
+                    market_id,
+                    captured_at,
+                    price,
+                    liquidity,
+                    int(market.get("days_left") or 0),
+                    score,
+                    market.get("category"),
+                    market.get("momentum"),
+                    market.get("change_5m"),
+                    market.get("change_15m"),
+                    market.get("change_1h"),
+                    market.get("change_24h"),
+                )
+            )
+
+        if not rows_to_insert:
+            return
+
         connection.executemany(
             """
             INSERT OR IGNORE INTO market_snapshots (
-                market_id, captured_at, price, liquidity, days_left, score,
-                category, momentum, change_5m, change_15m, change_1h, change_24h
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                market_id,
+                captured_at,
+                price,
+                liquidity,
+                days_left,
+                score,
+                category,
+                momentum,
+                change_5m,
+                change_15m,
+                change_1h,
+                change_24h
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            rows,
+            rows_to_insert,
         )
-        connection.commit()
 
+        connection.commit()
 
 def record_alert(alert: dict[str, Any]) -> str:
     ensure_ai_schema()
