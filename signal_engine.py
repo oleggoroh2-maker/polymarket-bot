@@ -322,8 +322,10 @@ def check_signals(
     new_alerts: list[dict[str, Any]] = []
 
     for signal in signals:
-        market_id = str(signal["id"])
-        detected = detect_alerts(signal)
+        liquidity = float(signal.get("liquidity") or 0)
+
+        if liquidity < config.MIN_ALERT_LIQUIDITY:
+            continue
 
         for alert_data in detected:
             alert_type = alert_data["alert_type"]
