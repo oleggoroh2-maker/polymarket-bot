@@ -86,7 +86,7 @@ def format_signal(
     ai_risk = signal.get("ai_risk")
     ml_probability = signal.get("ml_probability")
 
-    reasons = alert.get("opportunity_reasons") or []
+    reasons = signal.get("opportunity_reasons") or []
     if reasons:
         lines.extend(["", "Почему рынок выделен:"])
         lines.extend(f"• {r}" for r in reasons)
