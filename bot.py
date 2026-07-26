@@ -16,6 +16,7 @@ import config
 from ai_engine import ensure_ai_schema, get_ai_stats
 from database import (
     add_subscriber,
+    cleanup_old_database_data,
     disable_subscriber,
     get_active_subscribers,
     get_subscribers_count,
@@ -570,6 +571,30 @@ async def error_handler(
 
 
 # ---------------- MAIN ----------------
+async def database_cleanup_job(
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    logger.info(
+        "Запущена ежедневная очистка базы"
+    )
+
+    await asyncio.to_thread(
+        cleanup_old_database_data,
+        False,
+    )
+
+
+async def database_vacuum_job(
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    logger.info(
+        "Запущено еженедельное обслуживание базы"
+    )
+
+    await asyncio.to_thread(
+        cleanup_old_database_data,
+        True,
+    )
 
 def main() -> None:
     init_db()
@@ -616,6 +641,36 @@ def main() -> None:
             name="polymarket_auto_scan",
         )
 
+        application.job_queue.run_repeating(
+            callback=database_cleanup_job,
+            interval=int(
+                getattr(
+                    config,
+                    "DATABASE_CLEANUP_INTERVAL_HOURS",
+                    24,
+                )
+                * 60
+                * 60
+            ),
+            first=15 * 60,
+            name="database_daily_cleanup",
+        )
+
+        application.job_queue.run_repeating(
+            callback=database_vacuum_job,
+            interval=int(
+                getattr(
+                    config,
+                    "DATABASE_VACUUM_INTERVAL_DAYS",
+                    7,
+                )
+                * 24
+                * 60
+                * 60
+            ),
+            first=60 * 60,
+            name="database_weekly_vacuum",
+        )
     logger.info(
         "Polymarket Bot запущен"
     )

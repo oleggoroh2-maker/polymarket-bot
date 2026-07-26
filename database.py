@@ -1,5 +1,7 @@
 import os
 import sqlite3
+import logging
+import config
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -446,3 +448,155 @@ if __name__ == "__main__":
     cleanup_alerts()
 
     print(f"✅ База данных готова: {DB_PATH}")
+
+logger = logging.getLogger(__name__)
+
+
+def cleanup_old_database_data(
+    run_vacuum: bool = False,
+) -> dict[str, int | float | bool]:
+    """
+    Удаляет устаревшие данные.
+
+    market_snapshots:
+        хранение за последние 7 дней.
+
+    prices:
+        хранение за последние 30 дней.
+
+    VACUUM выполняется только при достаточном количестве
+    освобождённых страниц.
+    """
+
+    snapshots_days = int(
+        getattr(
+            config,
+            "MARKET_SNAPSHOTS_RETENTION_DAYS",
+            7,
+        )
+    )
+
+    prices_days = int(
+        getattr(
+            config,
+            "PRICES_RETENTION_DAYS",
+            30,
+        )
+    )
+
+    vacuum_min_free_ratio = float(
+        getattr(
+            config,
+            "DATABASE_VACUUM_MIN_FREE_RATIO",
+            0.15,
+        )
+    )
+
+    result: dict[str, int | float | bool] = {
+        "deleted_snapshots": 0,
+        "deleted_prices": 0,
+        "page_count": 0,
+        "free_pages": 0,
+        "free_ratio": 0.0,
+        "vacuum_performed": False,
+    }
+
+    try:
+        with closing(get_connection()) as connection:
+            connection.execute(
+                "PRAGMA busy_timeout = 60000"
+            )
+
+            snapshots_cursor = connection.execute(
+                """
+                DELETE FROM market_snapshots
+                WHERE datetime(captured_at) <
+                      datetime('now', ?)
+                """,
+                (f"-{snapshots_days} days",),
+            )
+
+            prices_cursor = connection.execute(
+                """
+                DELETE FROM prices
+                WHERE datetime(timestamp) <
+                      datetime('now', ?)
+                """,
+                (f"-{prices_days} days",),
+            )
+
+            result["deleted_snapshots"] = max(
+                snapshots_cursor.rowcount,
+                0,
+            )
+            result["deleted_prices"] = max(
+                prices_cursor.rowcount,
+                0,
+            )
+
+            connection.commit()
+
+            page_count = int(
+                connection.execute(
+                    "PRAGMA page_count"
+                ).fetchone()[0]
+            )
+
+            free_pages = int(
+                connection.execute(
+                    "PRAGMA freelist_count"
+                ).fetchone()[0]
+            )
+
+            free_ratio = (
+                free_pages / page_count
+                if page_count > 0
+                else 0.0
+            )
+
+            result["page_count"] = page_count
+            result["free_pages"] = free_pages
+            result["free_ratio"] = free_ratio
+
+        if (
+            run_vacuum
+            and result["free_ratio"]
+            >= vacuum_min_free_ratio
+        ):
+            # VACUUM выполняется вне предыдущей транзакции.
+            with closing(get_connection()) as connection:
+                connection.execute(
+                    "PRAGMA busy_timeout = 60000"
+                )
+                connection.execute("VACUUM")
+
+            result["vacuum_performed"] = True
+
+        logger.info(
+            (
+                "Обслуживание базы завершено: "
+                "snapshots удалено=%s, "
+                "prices удалено=%s, "
+                "свободно=%.1f%%, "
+                "VACUUM=%s"
+            ),
+            result["deleted_snapshots"],
+            result["deleted_prices"],
+            float(result["free_ratio"]) * 100,
+            result["vacuum_performed"],
+        )
+
+    except sqlite3.OperationalError as error:
+        # Если в момент обслуживания база занята сканером,
+        # бот продолжит работу и повторит очистку позже.
+        logger.warning(
+            "Обслуживание базы временно пропущено: %s",
+            error,
+        )
+
+    except Exception:
+        logger.exception(
+            "Ошибка автоматического обслуживания базы"
+        )
+
+    return result
