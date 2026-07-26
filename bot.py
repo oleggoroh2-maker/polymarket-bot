@@ -86,6 +86,24 @@ def format_signal(
     ai_risk = signal.get("ai_risk")
     ml_probability = signal.get("ml_probability")
 
+    if "opportunity_score" in alert:
+    lines.extend([
+        f"🤖 AI Quality: {int(alert.get('ai_quality') or 0)}/100",
+        f"⚠️ AI Risk: {int(alert.get('ai_risk') or 0)}/100",
+        f"🎯 Opportunity: {int(alert.get('opportunity_score') or 0)}/100",
+    ])
+
+    ml = alert.get("ml_probability")
+    if ml is not None:
+        lines.append(f"🧠 ML: {ml * 100:.1f}%")
+    else:
+        lines.append("🧠 ML: накопление данных")
+
+    reasons = alert.get("opportunity_reasons") or []
+    if reasons:
+        lines.extend(["", "Почему рынок выделен:"])
+        lines.extend(f"• {r}" for r in reasons)
+
     if ai_quality is not None:
         lines.append(f"🤖 AI Quality: {int(ai_quality)}/100")
     if ai_risk is not None:
@@ -409,7 +427,6 @@ async def auto_scan_job(
         opportunities = await asyncio.to_thread(
             check_opportunities,
             signals,
-            event_market_ids,
         )
 
         alerts.extend(opportunities)
