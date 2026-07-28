@@ -71,6 +71,28 @@ def init_db() -> None:
             """
         )
 
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS favorite_events (
+                chat_id INTEGER NOT NULL,
+                market_id TEXT NOT NULL,
+                market_name TEXT NOT NULL,
+                url TEXT,
+                note TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (chat_id, market_id)
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_favorite_events_chat
+            ON favorite_events (chat_id, created_at)
+            """
+        )
+
         connection.commit()
 
 
@@ -435,6 +457,135 @@ def get_subscribers_count() -> int:
         ).fetchone()
 
     return int(row[0] if row else 0)
+
+
+def add_favorite_event(
+    chat_id: int,
+    market_id: str,
+    market_name: str,
+    url: Optional[str] = None,
+    note: Optional[str] = None,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+
+    with closing(get_connection()) as connection:
+        connection.execute(
+            """
+            INSERT INTO favorite_events (
+                chat_id,
+                market_id,
+                market_name,
+                url,
+                note,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(chat_id, market_id) DO UPDATE SET
+                market_name = excluded.market_name,
+                url = excluded.url,
+                note = excluded.note,
+                updated_at = excluded.updated_at
+            """,
+            (
+                int(chat_id),
+                str(market_id),
+                str(market_name),
+                url,
+                note,
+                now,
+                now,
+            ),
+        )
+        connection.commit()
+
+
+def get_favorite_events(chat_id: int) -> list[dict[str, Optional[str]]]:
+    with closing(get_connection()) as connection:
+        rows = connection.execute(
+            """
+            SELECT market_id, market_name, url, note
+            FROM favorite_events
+            WHERE chat_id = ?
+            ORDER BY created_at ASC
+            """,
+            (int(chat_id),),
+        ).fetchall()
+
+    return [
+        {
+            "market_id": str(row[0]),
+            "market_name": str(row[1]),
+            "url": row[2],
+            "note": row[3],
+        }
+        for row in rows
+    ]
+
+
+def get_favorite_event(
+    chat_id: int,
+    market_id: str,
+) -> Optional[dict[str, Optional[str]]]:
+    with closing(get_connection()) as connection:
+        row = connection.execute(
+            """
+            SELECT market_id, market_name, url, note
+            FROM favorite_events
+            WHERE chat_id = ?
+              AND market_id = ?
+            LIMIT 1
+            """,
+            (int(chat_id), str(market_id)),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "market_id": str(row[0]),
+        "market_name": str(row[1]),
+        "url": row[2],
+        "note": row[3],
+    }
+
+
+def delete_favorite_event(chat_id: int, market_id: str) -> bool:
+    with closing(get_connection()) as connection:
+        cursor = connection.execute(
+            """
+            DELETE FROM favorite_events
+            WHERE chat_id = ?
+              AND market_id = ?
+            """,
+            (int(chat_id), str(market_id)),
+        )
+        connection.commit()
+
+    return cursor.rowcount > 0
+
+
+def update_favorite_note(
+    chat_id: int,
+    market_id: str,
+    note: Optional[str],
+) -> bool:
+    now = datetime.now(timezone.utc).isoformat()
+
+    with closing(get_connection()) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE favorite_events
+            SET note = ?,
+                updated_at = ?
+            WHERE chat_id = ?
+              AND market_id = ?
+            """,
+            (note, now, int(chat_id), str(market_id)),
+        )
+        connection.commit()
+
+    return cursor.rowcount > 0
 
 
 # Совместимость со старым scanner.py

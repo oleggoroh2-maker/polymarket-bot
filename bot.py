@@ -15,13 +15,18 @@ from telegram.ext import (
 import config
 from ai_engine import ensure_ai_schema, get_ai_stats
 from database import (
+    add_favorite_event,
     add_subscriber,
     cleanup_old_database_data,
+    delete_favorite_event,
     disable_subscriber,
     get_active_subscribers,
+    get_favorite_event,
+    get_favorite_events,
     get_subscribers_count,
     init_db,
     is_subscriber_active,
+    update_favorite_note,
 )
 from scanner import scan
 from signal_engine import check_signals, format_alert
@@ -57,8 +62,19 @@ keyboard = ReplyKeyboardMarkup(
     [
         ["🔍 Сканировать", "⭐ Лучшая сделка"],
         ["📊 ТОП-5", "📈 Статистика"],
+        ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
         ["ℹ Помощь"],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
+
+favorites_keyboard = ReplyKeyboardMarkup(
+    [
+        ["➕ Добавить событие", "📋 Мои события"],
+        ["✏️ Изменить заметку", "🗑 Удалить событие"],
+        ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -149,6 +165,83 @@ async def subscribe_current_chat(update: Update) -> None:
         user.username if user else None,
         user.first_name if user else None,
     )
+
+
+def get_market_id(item: dict[str, Any]) -> Optional[str]:
+    for key in (
+        "id",
+        "market_id",
+        "condition_id",
+        "conditionId",
+    ):
+        value = item.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+
+    return None
+
+
+def normalize_url(value: Optional[str]) -> str:
+    if not value:
+        return ""
+
+    return str(value).strip().rstrip("/").lower()
+
+
+def find_market_from_input(
+    user_input: str,
+    markets: list[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    query = user_input.strip()
+    normalized_query = normalize_url(query)
+    query_tail = normalized_query.rsplit("/", 1)[-1]
+
+    for market in markets:
+        market_id = get_market_id(market)
+        market_url = normalize_url(market.get("url"))
+
+        if market_id and query == market_id:
+            return market
+
+        if market_url and normalized_query == market_url:
+            return market
+
+        if market_url and query_tail:
+            market_tail = market_url.rsplit("/", 1)[-1]
+            if query_tail == market_tail:
+                return market
+
+        if market_id and market_id.lower() in normalized_query:
+            return market
+
+    return None
+
+
+def format_favorite_alert(
+    alert_text: str,
+    favorite: dict[str, Optional[str]],
+) -> str:
+    lines = [
+        "⭐ МОЕ СОБЫТИЕ",
+        "",
+        alert_text,
+    ]
+
+    note = (favorite.get("note") or "").strip()
+    if note:
+        lines.extend([
+            "",
+            "📝 Моя заметка",
+            note,
+        ])
+
+    return "\n".join(lines)
+
+
+def clear_favorite_state(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("favorite_state", None)
+    context.user_data.pop("pending_favorite", None)
+    context.user_data.pop("selected_favorite_id", None)
 
 
 # ---------------- START ----------------
@@ -382,6 +475,353 @@ async def stats_action(
     )
 
 
+# ---------------- FAVORITE EVENTS ----------------
+
+async def favorites_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+
+    clear_favorite_state(context)
+
+    await update.message.reply_text(
+        "⭐ Мои события\n\n"
+        "Здесь можно добавить рынок Polymarket и оставить заметку.",
+        reply_markup=favorites_keyboard,
+    )
+
+
+async def list_favorites_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+
+    favorites = await asyncio.to_thread(
+        get_favorite_events,
+        update.effective_chat.id,
+    )
+
+    if not favorites:
+        await update.message.reply_text(
+            "⭐ Список пока пуст.",
+            reply_markup=favorites_keyboard,
+        )
+        return
+
+    lines = ["⭐ Мои события", ""]
+
+    for number, favorite in enumerate(favorites, start=1):
+        lines.append(f"{number}. {favorite['market_name']}")
+
+        note = (favorite.get("note") or "").strip()
+        if note:
+            lines.append(f"📝 {note}")
+
+        url = (favorite.get("url") or "").strip()
+        if url:
+            lines.append(f"🌐 {url}")
+
+        lines.append("")
+
+    await update.message.reply_text(
+        "\n".join(lines).strip(),
+        disable_web_page_preview=True,
+        reply_markup=favorites_keyboard,
+    )
+
+
+async def begin_add_favorite(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+
+    clear_favorite_state(context)
+    context.user_data["favorite_state"] = "awaiting_market"
+
+    await update.message.reply_text(
+        "Отправьте ссылку Polymarket на событие или Market ID.\n\n"
+        "Для отмены нажмите «⬅️ Главное меню».",
+        reply_markup=favorites_keyboard,
+    )
+
+
+async def handle_favorite_market_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+) -> None:
+    if update.message is None:
+        return
+
+    await update.message.reply_text(
+        "🔍 Ищу событие среди рынков Polymarket..."
+    )
+
+    try:
+        markets = await run_scan_in_thread()
+    except Exception as error:
+        logger.exception("Ошибка поиска избранного события")
+        await update.message.reply_text(
+            f"❌ Не удалось получить рынки:\n{error}",
+            reply_markup=favorites_keyboard,
+        )
+        return
+
+    market = find_market_from_input(text, markets)
+
+    if market is None:
+        await update.message.reply_text(
+            "❌ Событие не найдено. Проверьте ссылку и отправьте её ещё раз.",
+            reply_markup=favorites_keyboard,
+        )
+        return
+
+    market_id = get_market_id(market)
+    if market_id is None:
+        await update.message.reply_text(
+            "❌ У найденного события отсутствует Market ID.",
+            reply_markup=favorites_keyboard,
+        )
+        return
+
+    context.user_data["pending_favorite"] = {
+        "market_id": market_id,
+        "market_name": str(
+            market.get("title")
+            or market.get("question")
+            or "Событие Polymarket"
+        ),
+        "url": market.get("url") or text.strip(),
+    }
+    context.user_data["favorite_state"] = "awaiting_note"
+
+    await update.message.reply_text(
+        "✅ Событие найдено:\n\n"
+        f"{context.user_data['pending_favorite']['market_name']}\n\n"
+        "Теперь отправьте заметку к событию.\n"
+        "Например: «Жду цену ниже 8¢».\n\n"
+        "Чтобы сохранить без заметки, отправьте знак -",
+        reply_markup=favorites_keyboard,
+    )
+
+
+async def handle_favorite_note_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+
+    pending = context.user_data.get("pending_favorite")
+    if not isinstance(pending, dict):
+        clear_favorite_state(context)
+        await update.message.reply_text(
+            "❌ Данные события потеряны. Добавьте его ещё раз.",
+            reply_markup=favorites_keyboard,
+        )
+        return
+
+    note = None if text.strip() == "-" else text.strip()
+
+    await asyncio.to_thread(
+        add_favorite_event,
+        update.effective_chat.id,
+        pending["market_id"],
+        pending["market_name"],
+        pending.get("url"),
+        note,
+    )
+
+    clear_favorite_state(context)
+
+    response = [
+        "✅ Событие добавлено в «Мои события».",
+        "",
+        str(pending["market_name"]),
+    ]
+    if note:
+        response.extend(["", f"📝 {note}"])
+
+    await update.message.reply_text(
+        "\n".join(response),
+        reply_markup=favorites_keyboard,
+    )
+
+
+async def begin_delete_favorite(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+
+    favorites = await asyncio.to_thread(
+        get_favorite_events,
+        update.effective_chat.id,
+    )
+    if not favorites:
+        await update.message.reply_text(
+            "⭐ Список пока пуст.",
+            reply_markup=favorites_keyboard,
+        )
+        return
+
+    context.user_data["favorite_state"] = "awaiting_delete_number"
+    context.user_data["favorite_choices"] = favorites
+
+    lines = ["Введите номер события, которое нужно удалить:", ""]
+    lines.extend(
+        f"{number}. {favorite['market_name']}"
+        for number, favorite in enumerate(favorites, start=1)
+    )
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        reply_markup=favorites_keyboard,
+    )
+
+
+async def handle_delete_number(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+
+    choices = context.user_data.get("favorite_choices") or []
+
+    try:
+        index = int(text.strip()) - 1
+        favorite = choices[index]
+    except (ValueError, IndexError, TypeError):
+        await update.message.reply_text(
+            "❌ Отправьте корректный номер из списка.",
+            reply_markup=favorites_keyboard,
+        )
+        return
+
+    deleted = await asyncio.to_thread(
+        delete_favorite_event,
+        update.effective_chat.id,
+        favorite["market_id"],
+    )
+    clear_favorite_state(context)
+    context.user_data.pop("favorite_choices", None)
+
+    await update.message.reply_text(
+        (
+            f"🗑 Событие удалено:\n{favorite['market_name']}"
+            if deleted
+            else "❌ Событие уже отсутствует в списке."
+        ),
+        reply_markup=favorites_keyboard,
+    )
+
+
+async def begin_edit_favorite_note(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+
+    favorites = await asyncio.to_thread(
+        get_favorite_events,
+        update.effective_chat.id,
+    )
+    if not favorites:
+        await update.message.reply_text(
+            "⭐ Список пока пуст.",
+            reply_markup=favorites_keyboard,
+        )
+        return
+
+    context.user_data["favorite_state"] = "awaiting_edit_number"
+    context.user_data["favorite_choices"] = favorites
+
+    lines = ["Введите номер события для изменения заметки:", ""]
+    lines.extend(
+        f"{number}. {favorite['market_name']}"
+        for number, favorite in enumerate(favorites, start=1)
+    )
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        reply_markup=favorites_keyboard,
+    )
+
+
+async def handle_edit_number(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+) -> None:
+    if update.message is None:
+        return
+
+    choices = context.user_data.get("favorite_choices") or []
+
+    try:
+        index = int(text.strip()) - 1
+        favorite = choices[index]
+    except (ValueError, IndexError, TypeError):
+        await update.message.reply_text(
+            "❌ Отправьте корректный номер из списка.",
+            reply_markup=favorites_keyboard,
+        )
+        return
+
+    context.user_data["selected_favorite_id"] = favorite["market_id"]
+    context.user_data["favorite_state"] = "awaiting_updated_note"
+
+    await update.message.reply_text(
+        f"Событие: {favorite['market_name']}\n\n"
+        "Отправьте новую заметку. Чтобы удалить заметку, отправьте знак -",
+        reply_markup=favorites_keyboard,
+    )
+
+
+async def handle_updated_note(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+
+    market_id = context.user_data.get("selected_favorite_id")
+    if not market_id:
+        clear_favorite_state(context)
+        await update.message.reply_text(
+            "❌ Событие не выбрано.",
+            reply_markup=favorites_keyboard,
+        )
+        return
+
+    note = None if text.strip() == "-" else text.strip()
+    updated = await asyncio.to_thread(
+        update_favorite_note,
+        update.effective_chat.id,
+        str(market_id),
+        note,
+    )
+    clear_favorite_state(context)
+    context.user_data.pop("favorite_choices", None)
+
+    await update.message.reply_text(
+        "✅ Заметка обновлена." if updated else "❌ Событие не найдено.",
+        reply_markup=favorites_keyboard,
+    )
+
+
 # ---------------- AUTO MONITOR ----------------
 
 async def auto_scan_job(
@@ -450,11 +890,28 @@ async def auto_scan_job(
         else:
             alert_text = format_alert(alert)
 
+        market_id = get_market_id(alert)
+
         for chat_id in subscribers:
+            personalized_text = alert_text
+
+            if market_id is not None:
+                favorite = await asyncio.to_thread(
+                    get_favorite_event,
+                    chat_id,
+                    market_id,
+                )
+
+                if favorite is not None:
+                    personalized_text = format_favorite_alert(
+                        alert_text,
+                        favorite,
+                    )
+
             try:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=alert_text,
+                    text=personalized_text,
                     disable_web_page_preview=True,
                 )
 
@@ -491,7 +948,38 @@ async def handle_buttons(
     if update.message is None:
         return
 
-    text = update.message.text
+    text = update.message.text or ""
+
+    if text == "⬅️ Главное меню":
+        clear_favorite_state(context)
+        context.user_data.pop("favorite_choices", None)
+        await update.message.reply_text(
+            "Главное меню 👇",
+            reply_markup=keyboard,
+        )
+        return
+
+    state = context.user_data.get("favorite_state")
+
+    if state == "awaiting_market":
+        await handle_favorite_market_input(update, context, text)
+        return
+
+    if state == "awaiting_note":
+        await handle_favorite_note_input(update, context, text)
+        return
+
+    if state == "awaiting_delete_number":
+        await handle_delete_number(update, context, text)
+        return
+
+    if state == "awaiting_edit_number":
+        await handle_edit_number(update, context, text)
+        return
+
+    if state == "awaiting_updated_note":
+        await handle_updated_note(update, context, text)
+        return
 
     if text == "🔍 Сканировать":
         await scan_action(update, context)
@@ -504,6 +992,21 @@ async def handle_buttons(
 
     elif text == "📈 Статистика":
         await stats_action(update, context)
+
+    elif text == "⭐ Мои события":
+        await favorites_action(update, context)
+
+    elif text == "➕ Добавить событие":
+        await begin_add_favorite(update, context)
+
+    elif text == "📋 Мои события":
+        await list_favorites_action(update, context)
+
+    elif text == "🗑 Удалить событие":
+        await begin_delete_favorite(update, context)
+
+    elif text == "✏️ Изменить заметку":
+        await begin_edit_favorite_note(update, context)
 
     elif text == "🔔 Включить уведомления":
         await subscribe_current_chat(update)
@@ -545,6 +1048,7 @@ async def handle_buttons(
             "⭐ Лучшая сделка — лучший рынок\n"
             "📊 ТОП-5 — пять лучших рынков\n"
             "📈 Статистика — сводка\n"
+            "⭐ Мои события — избранные рынки и заметки\n"
             "🔔 Включить уведомления — подписаться\n"
             "🔕 Отключить уведомления — отписаться\n\n"
             f"Ваши автоуведомления: {status}",
