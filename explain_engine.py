@@ -1,7 +1,7 @@
-"""Transparent local explanations for Polymarket AI signals.
+"""Compact deterministic explanations for Polymarket alerts.
 
-The module does not change scoring, filtering, ML predictions, or alert logic.
-It only turns metrics already present in a signal into concise Telegram text.
+The module does not alter scoring, filtering, ML predictions or alert logic.
+It only formats metrics already available in the alert payload.
 """
 
 from __future__ import annotations
@@ -11,14 +11,14 @@ from typing import Any, Optional
 
 
 _TIMEFRAMES = (
-    ("5м", "change_5m"),
-    ("15м", "change_15m"),
-    ("1ч", "change_1h"),
-    ("24ч", "change_24h"),
+    ("5 минут", "change_5m"),
+    ("15 минут", "change_15m"),
+    ("1 час", "change_1h"),
+    ("24 часа", "change_24h"),
 )
 
 
-def _number(value: Any, default: Optional[float] = 0.0) -> Optional[float]:
+def _number(value: Any, default: Optional[float] = None) -> Optional[float]:
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -28,197 +28,204 @@ def _number(value: Any, default: Optional[float] = 0.0) -> Optional[float]:
     return number
 
 
-def _known_changes(signal: dict[str, Any]) -> list[tuple[str, float]]:
-    result: list[tuple[str, float]] = []
-    for label, key in _TIMEFRAMES:
-        value = _number(signal.get(key), None)
+def _first_number(signal: dict[str, Any], *keys: str) -> Optional[float]:
+    for key in keys:
+        value = _number(signal.get(key))
         if value is not None:
-            result.append((label, value))
-    return result
+            return value
+    return None
 
 
-def _strongest_change(signal: dict[str, Any]) -> Optional[tuple[str, float]]:
-    changes = _known_changes(signal)
-    if not changes:
+def _as_percent(value: Optional[float]) -> Optional[float]:
+    """Accept ML probabilities in either 0..1 or 0..100 format."""
+    if value is None:
         return None
-    return max(changes, key=lambda item: abs(item[1]))
+    return value * 100.0 if 0.0 <= value <= 1.0 else value
 
 
-def _trend_summary(changes: list[tuple[str, float]]) -> tuple[int, int, float]:
-    meaningful = [value for _, value in changes if abs(value) >= 1.0]
-    if not meaningful:
-        return 0, 0, 0.0
-    positive = sum(1 for value in meaningful if value > 0)
-    negative = sum(1 for value in meaningful if value < 0)
-    consistency = max(positive, negative) / len(meaningful)
-    return positive, negative, consistency
+def _main_price_change(signal: dict[str, Any]) -> tuple[Optional[str], Optional[float]]:
+    explicit = _number(signal.get("change_percent"))
+    timeframe = str(signal.get("timeframe") or "").strip()
+    if explicit is not None:
+        return timeframe or None, explicit
+
+    known: list[tuple[str, float]] = []
+    for label, key in _TIMEFRAMES:
+        value = _number(signal.get(key))
+        if value is not None:
+            known.append((label, value))
+
+    if not known:
+        return None, None
+    return max(known, key=lambda item: abs(item[1]))
 
 
-def _risk_label(risk: int) -> str:
+def _momentum_direction(signal: dict[str, Any], price_change: Optional[float]) -> str:
+    raw = str(signal.get("momentum") or "").strip()
+    upper = raw.upper()
+
+    if any(token in upper for token in ("PUMP", "GROWTH", "BULL", "UP")):
+        return "BULLISH"
+    if any(token in upper for token in ("DIP", "DROP", "BEAR", "DOWN")):
+        return "BEARISH"
+    if "NEUTRAL" in upper:
+        return "NEUTRAL"
+    if price_change is not None:
+        if price_change > 0:
+            return "BULLISH"
+        if price_change < 0:
+            return "BEARISH"
+    return "NEUTRAL"
+
+
+def _indicator(value: float, good_from: float, medium_from: float) -> str:
+    if value >= good_from:
+        return "🟢"
+    if value >= medium_from:
+        return "🟡"
+    return "🔴"
+
+
+def _signed(value: float) -> str:
+    return f"{value:+.1f}%"
+
+
+def _risk_text(risk: Optional[float]) -> Optional[str]:
+    if risk is None:
+        return None
     if risk <= 25:
         return "низкий"
     if risk <= 45:
-        return "умеренный"
+        return "средний"
     if risk <= 65:
         return "повышенный"
     return "высокий"
 
 
-def _confidence_label(signal: dict[str, Any]) -> str:
-    quality = int(_number(signal.get("ai_quality"), 0) or 0)
-    risk = int(_number(signal.get("ai_risk"), 100) or 100)
-    ml_probability = _number(signal.get("ml_probability"), None)
-    history_count = len(_known_changes(signal))
+def _build_conclusion(
+    *,
+    price_change: Optional[float],
+    volume_change: Optional[float],
+    liquidity_change: Optional[float],
+    ml_percent: Optional[float],
+    risk: Optional[float],
+    direction: str,
+) -> str:
+    movement = abs(price_change or 0.0)
+    is_rise = direction == "BULLISH"
+    move_word = "рост" if is_rise else "падение"
 
-    confidence_points = quality - risk * 0.45 + history_count * 4
-    if ml_probability is not None:
-        confidence_points += (ml_probability - 0.5) * 35
+    confirmations: list[str] = []
+    if volume_change is not None and volume_change >= 50:
+        confirmations.append("объёмом")
+    if liquidity_change is not None and liquidity_change >= 10:
+        confirmations.append("ликвидностью")
+    if ml_percent is not None and ml_percent >= 65:
+        confirmations.append("ML-моделью")
 
-    if confidence_points >= 65:
-        return "высокая"
-    if confidence_points >= 40:
-        return "средняя"
-    return "ограниченная"
+    if movement >= 30 and confirmations:
+        joined = " и ".join(confirmations[:2])
+        first = f"Сильный {move_word} подтверждается {joined}."
+    elif movement >= 30:
+        first = f"Зафиксирован сильный {move_word} цены."
+    elif movement >= 10:
+        first = f"Движение цены заметное: {move_word} набирает силу."
+    else:
+        first = "Сигнал выделен сочетанием текущих рыночных метрик."
+
+    if ml_percent is not None and ml_percent < 40:
+        second = "Однако ML пока слабо подтверждает продолжение движения."
+    elif risk is not None and risk >= 65:
+        second = "Высокий риск повышает вероятность резкого разворота."
+    elif ml_percent is not None and ml_percent >= 70 and (risk is None or risk <= 45):
+        second = "Вероятность продолжения движения выше средней."
+    elif confirmations:
+        second = "Сигнал выглядит подтверждённым, но продолжение не гарантировано."
+    else:
+        second = "Для большей уверенности желательно дополнительное подтверждение."
+
+    return f"{first}\n{second}"
 
 
 def build_explanation(signal: dict[str, Any], max_factors: int = 5) -> dict[str, Any]:
-    """Build a compact deterministic explanation from existing metrics."""
+    """Return only real, available metrics; unavailable changes are omitted."""
+    _, price_change = _main_price_change(signal)
+    direction = _momentum_direction(signal, price_change)
+
+    # Supported aliases make the formatter forward-compatible. These values
+    # are shown only when another module actually supplies them.
+    volume_change = _first_number(
+        signal,
+        "volume_change_percent",
+        "volume_change",
+        "volume_percent_change",
+    )
+    liquidity_change = _first_number(
+        signal,
+        "liquidity_change_percent",
+        "liquidity_change",
+        "liquidity_percent_change",
+    )
+    ml_percent = _as_percent(_number(signal.get("ml_probability")))
+    risk = _number(signal.get("ai_risk"))
+
     factors: list[tuple[int, str]] = []
-    warnings: list[tuple[int, str]] = []
 
-    score = int(_number(signal.get("score"), 0) or 0)
-    quality = int(_number(signal.get("ai_quality"), 0) or 0)
-    risk = int(_number(signal.get("ai_risk"), 100) or 100)
-    liquidity = float(_number(signal.get("liquidity"), 0.0) or 0.0)
-    price = float(_number(signal.get("price"), 0.0) or 0.0)
-    momentum = str(signal.get("momentum") or "").strip()
-    changes = _known_changes(signal)
-    strongest = _strongest_change(signal)
-    positive, negative, consistency = _trend_summary(changes)
+    if price_change is not None:
+        icon = "🟢" if abs(price_change) >= 30 else "🟡" if abs(price_change) >= 10 else "🔴"
+        action = "выросла" if price_change >= 0 else "снизилась"
+        factors.append((100, f"{icon} Цена {action}: {_signed(price_change)}"))
 
-    if score >= 95:
-        factors.append((95, f"🟢 Базовый Score очень высокий: {score}/100"))
-    elif score >= 85:
-        factors.append((85, f"🟢 Сильный базовый Score: {score}/100"))
-    elif score >= 70:
-        factors.append((65, f"🟡 Базовый Score выше среднего: {score}/100"))
-    else:
-        warnings.append((65, f"🟡 Базовый Score пока ограничен: {score}/100"))
+    if volume_change is not None:
+        icon = _indicator(abs(volume_change), 100, 30)
+        factors.append((90, f"{icon} Объём: {_signed(volume_change)}"))
 
-    if quality >= 80:
-        factors.append((92, f"🟢 AI Quality высокий: {quality}/100"))
-    elif quality >= 65:
-        factors.append((72, f"🟢 AI Quality подтверждает сигнал: {quality}/100"))
-    elif quality:
-        warnings.append((72, f"🟡 AI Quality умеренный: {quality}/100"))
+    if liquidity_change is not None:
+        icon = _indicator(abs(liquidity_change), 25, 10)
+        factors.append((80, f"{icon} Ликвидность: {_signed(liquidity_change)}"))
 
-    if risk <= 25:
-        factors.append((90, f"🟢 AI Risk низкий: {risk}/100"))
-    elif risk <= 45:
-        factors.append((68, f"🟡 AI Risk умеренный: {risk}/100"))
-    elif risk <= 65:
-        warnings.append((82, f"🟡 AI Risk повышенный: {risk}/100"))
-    else:
-        warnings.append((95, f"🔴 AI Risk высокий: {risk}/100"))
+    momentum_icon = "🟢" if direction in {"BULLISH", "BEARISH"} else "🟡"
+    factors.append((70, f"{momentum_icon} Momentum: {direction}"))
 
-    if liquidity >= 1_000_000:
-        factors.append((88, f"🟢 Очень высокая ликвидность: ${liquidity:,.0f}"))
-    elif liquidity >= 500_000:
-        factors.append((78, f"🟢 Высокая ликвидность: ${liquidity:,.0f}"))
-    elif liquidity >= 100_000:
-        factors.append((52, f"🟡 Достаточная ликвидность: ${liquidity:,.0f}"))
-    elif liquidity < 10_000:
-        warnings.append((90, f"🔴 Низкая ликвидность: ${liquidity:,.0f}"))
+    if ml_percent is not None:
+        icon = _indicator(ml_percent, 70, 45)
+        factors.append((95, f"{icon} ML: {ml_percent:.1f}%"))
 
-    if strongest is not None:
-        timeframe, change = strongest
-        icon = "🟢" if change > 0 else "🔴"
-        direction = "рост" if change > 0 else "падение"
-        priority = min(96, 55 + int(abs(change)))
-        factors.append((priority, f"{icon} Сильнейшее движение — {direction} {change:+.1f}% за {timeframe}"))
+    if risk is not None and len(factors) < max_factors:
+        risk_label = _risk_text(risk)
+        icon = "🟢" if risk <= 25 else "🟡" if risk <= 55 else "🔴"
+        factors.append((50, f"{icon} AI Risk: {risk:.0f}% ({risk_label})"))
 
-    if len(changes) >= 2 and consistency >= 0.75:
-        direction = "ростом" if positive > negative else "падением"
-        factors.append((84, f"🟢 Движение подтверждается {max(positive, negative)} периодами с {direction}"))
-    elif len(changes) >= 2 and positive and negative:
-        warnings.append((74, "🟡 Периоды дают смешанные сигналы"))
-    elif len(changes) < 2:
-        warnings.append((80, "🟡 Недостаточно ценовой истории для полного подтверждения"))
+    selected = [text for _, text in sorted(factors, key=lambda item: item[0], reverse=True)[:max_factors]]
 
-    momentum_upper = momentum.upper()
-    if momentum and momentum not in {"—", "NONE", "UNKNOWN"}:
-        if any(token in momentum_upper for token in ("PUMP", "GROWTH", "BULL")):
-            factors.append((76, f"🟢 Momentum подтверждает рост: {momentum}"))
-        elif any(token in momentum_upper for token in ("DIP", "DROP", "BEAR")):
-            factors.append((76, f"🔴 Momentum подтверждает снижение: {momentum}"))
-        elif "NEUTRAL" in momentum_upper:
-            warnings.append((55, "🟡 Momentum остаётся нейтральным"))
-
-    ml_probability = _number(signal.get("ml_probability"), None)
-    if ml_probability is not None:
-        percent = ml_probability * 100.0
-        if percent >= 70:
-            factors.append((91, f"🟢 ML подтверждение: {percent:.1f}%"))
-        elif percent >= 55:
-            factors.append((62, f"🟡 ML подтверждение умеренное: {percent:.1f}%"))
-        elif percent < 45:
-            warnings.append((86, f"🔴 ML подтверждение слабое: {percent:.1f}%"))
-
-    if 0 < price <= 0.003:
-        warnings.append((70, "🟡 Очень низкая цена усиливает процентные колебания"))
-
-    selected: list[str] = []
-    for _, text in sorted(factors, key=lambda item: item[0], reverse=True):
-        if text not in selected:
-            selected.append(text)
-        if len(selected) >= max_factors:
-            break
-
-    warning_texts: list[str] = []
-    for _, text in sorted(warnings, key=lambda item: item[0], reverse=True):
-        if text not in selected and text not in warning_texts:
-            warning_texts.append(text)
-        if len(selected) + len(warning_texts) >= max_factors:
-            break
-
-    selected.extend(warning_texts)
-
-    strong_positive = sum(text.startswith("🟢") for text in selected)
-    strong_warning = sum(text.startswith("🔴") for text in selected)
-
-    alert_type = str(signal.get("alert_type") or "")
-    change_percent = float(_number(signal.get("change_percent"), 0.0) or 0.0)
-
-    if strong_warning >= 2 or risk >= 70:
-        conclusion = "Сигнал заметный, но риск высокий. Нужна дополнительная проверка рынка перед решением."
-    elif "STRONG_DIP" in alert_type or change_percent <= -30:
-        conclusion = "Зафиксировано сильное снижение. Возможен отскок, но направление ещё требует подтверждения."
-    elif "STRONG_PUMP" in alert_type or change_percent >= 30:
-        conclusion = "Импульс сильный и подтверждён метриками. Следует учитывать риск входа после уже состоявшегося движения."
-    elif score >= 90 and quality >= 70 and risk <= 45:
-        conclusion = "Рынок выделяется сочетанием высокого Score, качества и приемлемого риска."
-    elif strong_positive >= 3:
-        conclusion = "Несколько независимых факторов подтверждают сигнал, но это не гарантирует дальнейшее движение."
-    else:
-        conclusion = "Потенциал есть, однако подтверждений пока недостаточно для высокой уверенности."
+    conclusion = _build_conclusion(
+        price_change=price_change,
+        volume_change=volume_change,
+        liquidity_change=liquidity_change,
+        ml_percent=ml_percent,
+        risk=risk,
+        direction=direction,
+    )
 
     return {
         "factors": selected,
         "conclusion": conclusion,
-        "confidence": _confidence_label(signal),
-        "risk_label": _risk_label(risk),
     }
 
 
 def format_ai_explain(signal: dict[str, Any], max_factors: int = 5) -> str:
     explanation = build_explanation(signal, max_factors=max_factors)
-    lines = ["🧠 AI Explain", "", "📌 Почему сигнал выделен"]
-    lines.extend(explanation["factors"] or ["🟡 Доступных факторов пока недостаточно"])
+    lines = [
+        "━━━━━━━━━━━━━━",
+        "",
+        "📌 Почему AI выбрал этот сигнал",
+        "",
+    ]
+    lines.extend(explanation["factors"] or ["🟡 Недостаточно данных для подробного объяснения"])
     lines.extend([
         "",
-        f"🎯 Уверенность: {explanation['confidence']}",
-        "",
         "💡 Вывод AI",
+        "",
         explanation["conclusion"],
     ])
     return "\n".join(lines)
