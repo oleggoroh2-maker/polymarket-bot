@@ -3,6 +3,7 @@ from typing import Any, Optional
 import config
 
 from ai_engine import enrich_signal, record_alert
+from explain_engine import format_ai_explain
 from database import (
     alert_on_cooldown,
     save_alert,
@@ -479,8 +480,18 @@ def format_alert(
         else:
             lines.append("🧠 ML: накопление данных")
 
+    if getattr(config, "AI_EXPLAIN_ENABLED", True):
+        lines.extend([
+            "",
+            format_ai_explain(
+                alert,
+                max_factors=int(getattr(config, "AI_EXPLAIN_MAX_FACTORS", 5)),
+            ),
+        ])
+
     lines.extend(
         [
+            "",
             f"🏷 {alert['category']}",
             f"⏳ {alert['days_left']} дней",
         ]
