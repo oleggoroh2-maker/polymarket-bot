@@ -156,9 +156,9 @@ def _snapshot_interval_minutes(score: int) -> int:
     )
 
 
-def _has_strong_market_move(
+def _get_strongest_market_move(
     market: dict[str, Any],
-) -> bool:
+) -> float:
     changes = [
         market.get("change_5m"),
         market.get("change_15m"),
@@ -166,7 +166,7 @@ def _has_strong_market_move(
         market.get("change_24h"),
     ]
 
-    strongest = max(
+    return max(
         (
             abs(float(value))
             for value in changes
@@ -175,11 +175,6 @@ def _has_strong_market_move(
         default=0.0,
     )
 
-    return strongest >= getattr(
-        config,
-        "SNAPSHOT_FORCE_MARKET_MOVE_PERCENT",
-        20.0,
-    )
 
 def save_market_snapshots(
     markets: list[dict[str, Any]],
@@ -224,7 +219,11 @@ def save_market_snapshots(
                     snapshot.price,
                     snapshot.liquidity,
                     snapshot.score,
-                    snapshot.momentum
+                    snapshot.momentum,
+                    snapshot.change_5m,
+                    snapshot.change_15m,
+                    snapshot.change_1h,
+                    snapshot.change_24h
                 FROM market_snapshots AS snapshot
                 INNER JOIN (
                     SELECT
@@ -247,6 +246,10 @@ def save_market_snapshots(
                     "liquidity": float(row[3] or 0),
                     "score": int(row[4] or 0),
                     "momentum": str(row[5] or ""),
+                    "change_5m": row[6],
+                    "change_15m": row[7],
+                    "change_1h": row[8],
+                    "change_24h": row[9],
                 }
 
         rows_to_insert: list[tuple[Any, ...]] = []
@@ -294,16 +297,43 @@ def save_market_snapshots(
                     )
                 )
 
+                score_change = abs(
+                    score - previous["score"]
+                )
+
                 score_changed = (
-                    score != previous["score"]
+                    score_change
+                    >= int(
+                        getattr(
+                            config,
+                            "SNAPSHOT_FORCE_SCORE_CHANGE",
+                            4,
+                        )
+                    )
                 )
 
                 momentum_changed = (
                     momentum != previous["momentum"]
                 )
 
-                strong_move = _has_strong_market_move(
-                    market
+                current_strongest_move = (
+                    _get_strongest_market_move(market)
+                )
+                previous_strongest_move = (
+                    _get_strongest_market_move(previous)
+                )
+                strong_move_threshold = float(
+                    getattr(
+                        config,
+                        "SNAPSHOT_FORCE_MARKET_MOVE_PERCENT",
+                        20.0,
+                    )
+                )
+                strong_move_crossed = (
+                    current_strongest_move
+                    >= strong_move_threshold
+                    and previous_strongest_move
+                    < strong_move_threshold
                 )
 
                 try:
@@ -335,7 +365,7 @@ def save_market_snapshots(
                     liquidity_changed,
                     score_changed,
                     momentum_changed,
-                    strong_move,
+                    strong_move_crossed,
                     interval_reached,
                 ])
 
