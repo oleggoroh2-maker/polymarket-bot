@@ -37,6 +37,7 @@ def ensure_ai_schema() -> None:
                 captured_at TEXT NOT NULL,
                 price REAL NOT NULL,
                 liquidity REAL NOT NULL,
+                volume REAL,
                 days_left INTEGER NOT NULL,
                 score INTEGER NOT NULL,
                 category TEXT,
@@ -98,6 +99,18 @@ def ensure_ai_schema() -> None:
             );
             """
         )
+
+        columns = {
+            str(row[1])
+            for row in cursor.execute(
+                "PRAGMA table_info(market_snapshots)"
+            ).fetchall()
+        }
+        if "volume" not in columns:
+            cursor.execute(
+                "ALTER TABLE market_snapshots ADD COLUMN volume REAL"
+            )
+
         connection.commit()
 
 
@@ -218,6 +231,7 @@ def save_market_snapshots(
                     snapshot.captured_at,
                     snapshot.price,
                     snapshot.liquidity,
+                    snapshot.volume,
                     snapshot.score,
                     snapshot.momentum,
                     snapshot.change_5m,
@@ -244,12 +258,15 @@ def save_market_snapshots(
                     "captured_at": row[1],
                     "price": float(row[2] or 0),
                     "liquidity": float(row[3] or 0),
-                    "score": int(row[4] or 0),
-                    "momentum": str(row[5] or ""),
-                    "change_5m": row[6],
-                    "change_15m": row[7],
-                    "change_1h": row[8],
-                    "change_24h": row[9],
+                    "volume": (
+                        float(row[4]) if row[4] is not None else None
+                    ),
+                    "score": int(row[5] or 0),
+                    "momentum": str(row[6] or ""),
+                    "change_5m": row[7],
+                    "change_15m": row[8],
+                    "change_1h": row[9],
+                    "change_24h": row[10],
                 }
 
         rows_to_insert: list[tuple[Any, ...]] = []
@@ -263,6 +280,12 @@ def save_market_snapshots(
             price = float(market.get("price") or 0)
             liquidity = float(
                 market.get("liquidity") or 0
+            )
+            raw_volume = market.get("volume")
+            volume = (
+                float(raw_volume)
+                if raw_volume is not None
+                else None
             )
             score = int(market.get("score") or 0)
             momentum = str(
@@ -293,6 +316,22 @@ def save_market_snapshots(
                     >= getattr(
                         config,
                         "SNAPSHOT_FORCE_LIQUIDITY_CHANGE_PERCENT",
+                        5.0,
+                    )
+                )
+
+                previous_volume = previous.get("volume")
+                volume_change = (
+                    _percent_change(volume, previous_volume)
+                    if volume is not None
+                    and previous_volume is not None
+                    else 0.0
+                )
+                volume_changed = (
+                    volume_change
+                    >= getattr(
+                        config,
+                        "SNAPSHOT_FORCE_VOLUME_CHANGE_PERCENT",
                         5.0,
                     )
                 )
@@ -363,6 +402,7 @@ def save_market_snapshots(
                 should_save = any([
                     price_changed,
                     liquidity_changed,
+                    volume_changed,
                     score_changed,
                     momentum_changed,
                     strong_move_crossed,
@@ -378,6 +418,7 @@ def save_market_snapshots(
                     captured_at,
                     price,
                     liquidity,
+                    volume,
                     int(market.get("days_left") or 0),
                     score,
                     market.get("category"),
@@ -399,6 +440,7 @@ def save_market_snapshots(
                 captured_at,
                 price,
                 liquidity,
+                volume,
                 days_left,
                 score,
                 category,
@@ -408,12 +450,62 @@ def save_market_snapshots(
                 change_1h,
                 change_24h
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows_to_insert,
         )
 
         connection.commit()
+
+
+def get_market_metrics_before_many(
+    market_id: str,
+    minutes_values: tuple[int, ...] = (5, 15, 60, 1440),
+) -> dict[int, dict[str, Optional[float]]]:
+    """Return real historical liquidity and volume values per timeframe."""
+    ensure_ai_schema()
+    now = _now()
+    oldest_target = now - timedelta(minutes=max(minutes_values))
+
+    with closing(get_connection()) as connection:
+        rows = connection.execute(
+            """
+            SELECT captured_at, liquidity, volume
+            FROM market_snapshots
+            WHERE market_id = ?
+              AND captured_at <= ?
+            ORDER BY captured_at DESC
+            LIMIT 2000
+            """,
+            (market_id, now.isoformat()),
+        ).fetchall()
+
+    parsed: list[tuple[datetime, float, Optional[float]]] = []
+    for captured_at, liquidity, volume in rows:
+        try:
+            captured = datetime.fromisoformat(str(captured_at))
+            if captured.tzinfo is None:
+                captured = captured.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        parsed.append((
+            captured,
+            float(liquidity or 0),
+            float(volume) if volume is not None else None,
+        ))
+        if captured <= oldest_target and len(parsed) > 1:
+            break
+
+    result: dict[int, dict[str, Optional[float]]] = {}
+    for minutes in minutes_values:
+        target = now - timedelta(minutes=minutes)
+        match = next((row for row in parsed if row[0] <= target), None)
+        result[minutes] = {
+            "liquidity": match[1] if match else None,
+            "volume": match[2] if match else None,
+        }
+    return result
+
 
 def record_alert(alert: dict[str, Any]) -> str:
     ensure_ai_schema()

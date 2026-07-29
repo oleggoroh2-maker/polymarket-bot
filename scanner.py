@@ -5,7 +5,11 @@ from typing import Any, Optional
 
 import requests
 
-from ai_engine import enrich_signal, process_scan
+from ai_engine import (
+    enrich_signal,
+    get_market_metrics_before_many,
+    process_scan,
+)
 from database import (
     cleanup_alerts,
     cleanup_prices,
@@ -34,6 +38,34 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+
+
+def calculate_metric_change(
+    current: Optional[float],
+    previous: Optional[float],
+) -> Optional[float]:
+    if current is None or previous is None or previous <= 0:
+        return None
+    return ((current - previous) / previous) * 100.0
+
+
+def parse_market_volume(market: dict[str, Any]) -> Optional[float]:
+    """Prefer rolling 24h volume; fall back to cumulative volume."""
+    for key in (
+        "volume24hr",
+        "volume24Hr",
+        "volume24h",
+        "volumeNum",
+        "volume",
+    ):
+        if market.get(key) is None:
+            continue
+        value = parse_float(market.get(key))
+        if value >= 0:
+            return value
+    return None
 
 
 # ---------------- API ----------------
@@ -493,6 +525,7 @@ def scan() -> list[dict[str, Any]]:
             liquidity = parse_float(
                 market.get("liquidityNum")
             )
+            volume = parse_market_volume(market)
 
             if liquidity < MIN_LIQUIDITY:
                 continue
@@ -534,6 +567,33 @@ def scan() -> list[dict[str, Any]]:
             price_24h = get_price_before(
                 market_id,
                 1440,
+            )
+
+            metric_history = get_market_metrics_before_many(market_id)
+
+            liquidity_change_5m = calculate_metric_change(
+                liquidity, metric_history[5]["liquidity"]
+            )
+            liquidity_change_15m = calculate_metric_change(
+                liquidity, metric_history[15]["liquidity"]
+            )
+            liquidity_change_1h = calculate_metric_change(
+                liquidity, metric_history[60]["liquidity"]
+            )
+            liquidity_change_24h = calculate_metric_change(
+                liquidity, metric_history[1440]["liquidity"]
+            )
+            volume_change_5m = calculate_metric_change(
+                volume, metric_history[5]["volume"]
+            )
+            volume_change_15m = calculate_metric_change(
+                volume, metric_history[15]["volume"]
+            )
+            volume_change_1h = calculate_metric_change(
+                volume, metric_history[60]["volume"]
+            )
+            volume_change_24h = calculate_metric_change(
+                volume, metric_history[1440]["volume"]
             )
 
             change_5m = calculate_change(
@@ -606,6 +666,15 @@ def scan() -> list[dict[str, Any]]:
                         )
                     ),
                     "liquidity": liquidity,
+                    "volume": volume,
+                    "volume_change_5m": volume_change_5m,
+                    "volume_change_15m": volume_change_15m,
+                    "volume_change_1h": volume_change_1h,
+                    "volume_change_24h": volume_change_24h,
+                    "liquidity_change_5m": liquidity_change_5m,
+                    "liquidity_change_15m": liquidity_change_15m,
+                    "liquidity_change_1h": liquidity_change_1h,
+                    "liquidity_change_24h": liquidity_change_24h,
                     "days_left": days_left,
                     "category": detect_category(
                         title

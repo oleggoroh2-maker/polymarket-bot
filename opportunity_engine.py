@@ -3,6 +3,7 @@ from typing import Any, Iterable
 import config
 
 from ai_engine import record_alert
+from explain_engine import format_ai_explain
 from database import alert_on_cooldown, save_alert
 
 
@@ -149,7 +150,9 @@ def check_opportunities(
             "current_price": float(signal["price"]),
             "old_price": signal.get("price_24h"),
             "change_percent": signal.get("change_24h"),
-            "timeframe": "оценка возможности",
+            "volume_change_percent": signal.get("volume_change_24h"),
+            "liquidity_change_percent": signal.get("liquidity_change_24h"),
+            "timeframe": "24 часа",
             "absolute_move": 0.0,
             "required_move": 0.0,
             "opportunity_score": opportunity_score,
@@ -204,6 +207,17 @@ def format_opportunity(alert: dict[str, Any]) -> str:
     if reasons:
         lines.extend(["", "Почему рынок выделен:"])
         lines.extend(f"• {reason}" for reason in reasons)
+
+    if getattr(config, "AI_EXPLAIN_ENABLED", True):
+        lines.extend([
+            "",
+            format_ai_explain(
+                alert,
+                max_factors=int(
+                    getattr(config, "AI_EXPLAIN_MAX_FACTORS", 8)
+                ),
+            ),
+        ])
 
     lines.extend([
         "",

@@ -147,7 +147,7 @@ def _build_conclusion(
     return f"{first}\n{second}"
 
 
-def build_explanation(signal: dict[str, Any], max_factors: int = 5) -> dict[str, Any]:
+def build_explanation(signal: dict[str, Any], max_factors: int = 8) -> dict[str, Any]:
     """Return only real, available metrics; unavailable changes are omitted."""
     _, price_change = _main_price_change(signal)
     direction = _momentum_direction(signal, price_change)
@@ -168,6 +168,8 @@ def build_explanation(signal: dict[str, Any], max_factors: int = 5) -> dict[str,
     )
     ml_percent = _as_percent(_number(signal.get("ml_probability")))
     risk = _number(signal.get("ai_risk"))
+    score = _number(signal.get("score"))
+    ai_quality = _number(signal.get("ai_quality"))
 
     factors: list[tuple[int, str]] = []
 
@@ -177,24 +179,38 @@ def build_explanation(signal: dict[str, Any], max_factors: int = 5) -> dict[str,
         factors.append((100, f"{icon} Цена {action}: {_signed(price_change)}"))
 
     if volume_change is not None:
-        icon = _indicator(abs(volume_change), 100, 30)
-        factors.append((90, f"{icon} Объём: {_signed(volume_change)}"))
+        icon = (
+            "🟢" if volume_change >= 30
+            else "🟡" if volume_change >= 0
+            else "🔴"
+        )
+        factors.append((95, f"{icon} Объём: {_signed(volume_change)}"))
 
     if liquidity_change is not None:
-        icon = _indicator(abs(liquidity_change), 25, 10)
-        factors.append((80, f"{icon} Ликвидность: {_signed(liquidity_change)}"))
+        icon = (
+            "🟢" if liquidity_change >= 10
+            else "🟡" if liquidity_change >= 0
+            else "🔴"
+        )
+        factors.append((90, f"{icon} Ликвидность: {_signed(liquidity_change)}"))
 
     momentum_icon = "🟢" if direction in {"BULLISH", "BEARISH"} else "🟡"
-    factors.append((70, f"{momentum_icon} Momentum: {direction}"))
+    factors.append((80, f"{momentum_icon} Momentum: {direction}"))
 
     if ml_percent is not None:
         icon = _indicator(ml_percent, 70, 45)
-        factors.append((95, f"{icon} ML: {ml_percent:.1f}%"))
+        factors.append((50, f"{icon} ML: {ml_percent:.1f}%"))
 
-    if risk is not None and len(factors) < max_factors:
+    if score is not None:
+        factors.append((70, f"{_indicator(score, 75, 50)} Score: {score:.0f}/100"))
+
+    if ai_quality is not None:
+        factors.append((60, f"{_indicator(ai_quality, 70, 45)} AI Quality: {ai_quality:.0f}/100"))
+
+    if risk is not None:
         risk_label = _risk_text(risk)
         icon = "🟢" if risk <= 25 else "🟡" if risk <= 55 else "🔴"
-        factors.append((50, f"{icon} AI Risk: {risk:.0f}% ({risk_label})"))
+        factors.append((40, f"{icon} AI Risk: {risk:.0f}% ({risk_label})"))
 
     selected = [text for _, text in sorted(factors, key=lambda item: item[0], reverse=True)[:max_factors]]
 
@@ -213,7 +229,7 @@ def build_explanation(signal: dict[str, Any], max_factors: int = 5) -> dict[str,
     }
 
 
-def format_ai_explain(signal: dict[str, Any], max_factors: int = 5) -> str:
+def format_ai_explain(signal: dict[str, Any], max_factors: int = 8) -> str:
     explanation = build_explanation(signal, max_factors=max_factors)
     lines = [
         "━━━━━━━━━━━━━━",
