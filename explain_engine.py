@@ -111,41 +111,56 @@ def _build_conclusion(
     risk: Optional[float],
     direction: str,
 ) -> str:
+    """Build a concise conclusion using the actual percentages in the alert."""
     movement = abs(price_change or 0.0)
     is_rise = direction == "BULLISH"
     move_word = "рост" if is_rise else "падение"
 
-    confirmations: list[str] = []
-    if volume_change is not None and volume_change >= 50:
-        confirmations.append("объёмом")
-    if liquidity_change is not None and liquidity_change >= 10:
-        confirmations.append("ликвидностью")
-    if ml_percent is not None and ml_percent >= 65:
-        confirmations.append("ML-моделью")
+    facts: list[str] = []
+    if price_change is not None:
+        facts.append(f"цена изменилась на {_signed(price_change)}")
+    if volume_change is not None:
+        facts.append(f"объём — на {_signed(volume_change)}")
+    if liquidity_change is not None:
+        facts.append(f"ликвидность — на {_signed(liquidity_change)}")
 
-    if movement >= 30 and confirmations:
-        joined = " и ".join(confirmations[:2])
-        first = f"Сильный {move_word} подтверждается {joined}."
-    elif movement >= 30:
-        first = f"Зафиксирован сильный {move_word} цены."
+    if len(facts) >= 3:
+        first = f"{facts[0]}, {facts[1]}, {facts[2]}."
+    elif len(facts) == 2:
+        first = f"{facts[0]}, {facts[1]}."
+    elif facts:
+        first = f"{facts[0]}."
     elif movement >= 10:
-        first = f"Движение цены заметное: {move_word} набирает силу."
+        first = f"Зафиксирован заметный {move_word}."
     else:
-        first = "Сигнал выделен сочетанием текущих рыночных метрик."
+        first = "Сигнал выделен сочетанием рыночных метрик."
 
-    if ml_percent is not None and ml_percent < 40:
-        second = "Однако ML пока слабо подтверждает продолжение движения."
-    elif risk is not None and risk >= 65:
-        second = "Высокий риск повышает вероятность резкого разворота."
-    elif ml_percent is not None and ml_percent >= 70 and (risk is None or risk <= 45):
-        second = "Вероятность продолжения движения выше средней."
-    elif confirmations:
-        second = "Сигнал выглядит подтверждённым, но продолжение не гарантировано."
+    confirmations = 0
+    contradictions = 0
+    if volume_change is not None:
+        confirmations += int(volume_change >= 20)
+        contradictions += int(volume_change < -10)
+    if liquidity_change is not None:
+        confirmations += int(liquidity_change >= 10)
+        contradictions += int(liquidity_change < -10)
+    if ml_percent is not None:
+        confirmations += int(ml_percent >= 65)
+        contradictions += int(ml_percent < 40)
+
+    if risk is not None and risk >= 65:
+        second = "Высокий AI Risk повышает вероятность резкого разворота."
+    elif contradictions >= 2:
+        second = "Сопутствующие метрики слабо подтверждают продолжение движения."
+    elif confirmations >= 2 and (risk is None or risk <= 55):
+        second = "Движение подтверждается несколькими независимыми факторами."
+    elif ml_percent is not None and ml_percent < 40:
+        second = f"ML подтверждает продолжение лишь на {ml_percent:.1f}%, поэтому сигнал требует осторожности."
+    elif ml_percent is not None and ml_percent >= 70:
+        second = f"ML-подтверждение высокое — {ml_percent:.1f}%, но продолжение не гарантировано."
     else:
-        second = "Для большей уверенности желательно дополнительное подтверждение."
+        second = "Сигнал выглядит значимым, но продолжение движения не гарантировано."
 
     return f"{first}\n{second}"
-
 
 def build_explanation(signal: dict[str, Any], max_factors: int = 8) -> dict[str, Any]:
     """Return only real, available metrics; unavailable changes are omitted."""
@@ -168,8 +183,6 @@ def build_explanation(signal: dict[str, Any], max_factors: int = 8) -> dict[str,
     )
     ml_percent = _as_percent(_number(signal.get("ml_probability")))
     risk = _number(signal.get("ai_risk"))
-    score = _number(signal.get("score"))
-    ai_quality = _number(signal.get("ai_quality"))
 
     factors: list[tuple[int, str]] = []
 
@@ -200,12 +213,6 @@ def build_explanation(signal: dict[str, Any], max_factors: int = 8) -> dict[str,
     if ml_percent is not None:
         icon = _indicator(ml_percent, 70, 45)
         factors.append((50, f"{icon} ML: {ml_percent:.1f}%"))
-
-    if score is not None:
-        factors.append((70, f"{_indicator(score, 75, 50)} Score: {score:.0f}/100"))
-
-    if ai_quality is not None:
-        factors.append((60, f"{_indicator(ai_quality, 70, 45)} AI Quality: {ai_quality:.0f}/100"))
 
     if risk is not None:
         risk_label = _risk_text(risk)
