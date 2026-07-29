@@ -93,6 +93,28 @@ def init_db() -> None:
             """
         )
 
+        # AI Memory migration. The AI tables are created by ai_engine,
+        # but an existing signal_outcomes table may need the new status field.
+        outcome_table = cursor.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'signal_outcomes'
+            LIMIT 1
+            """
+        ).fetchone()
+        if outcome_table is not None:
+            outcome_columns = {
+                str(row[1])
+                for row in cursor.execute(
+                    "PRAGMA table_info(signal_outcomes)"
+                ).fetchall()
+            }
+            if "status" not in outcome_columns:
+                cursor.execute(
+                    "ALTER TABLE signal_outcomes ADD COLUMN status TEXT"
+                )
+
         connection.commit()
 
 

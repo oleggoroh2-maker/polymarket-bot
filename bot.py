@@ -471,7 +471,18 @@ async def stats_action(
         f"Контрольных замеров: {ai_stats['outcomes']}\n"
         f"Обучающих примеров: {ai_stats['training_samples']}/"
         f"{ai_stats['min_training_samples']}\n"
-        f"ML-модель: {'готова ✅' if ai_stats['model_ready'] else 'накопление данных ⏳'}"
+        f"ML-модель: {'готова ✅' if ai_stats['model_ready'] else 'накопление данных ⏳'}\n\n"
+        "🧠 AI Memory (24ч)\n"
+        f"Проверенных сигналов: {ai_stats['memory_24h']['total']}\n"
+        f"Успешных: {ai_stats['memory_24h']['successful']}\n"
+        f"Частичных: {ai_stats['memory_24h']['partial']}\n"
+        f"Неудачных: {ai_stats['memory_24h']['failed']}\n"
+        f"Точность: "
+        + (
+            f"{ai_stats['memory_24h']['success_rate']:.1f}%"
+            if ai_stats['memory_24h']['success_rate'] is not None
+            else "накопление данных"
+        )
     )
 
 

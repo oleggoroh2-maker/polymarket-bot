@@ -13,10 +13,11 @@ import config
 from database import get_connection
 from feature_engine import calculate_features, calculate_rule_assessment
 from ml_engine import load_model, predict_probability, train_model
+from memory_engine import classify_outcome, get_memory_stats
 
 logger = logging.getLogger(__name__)
 
-CHECKPOINTS_MINUTES = (15, 60, 360, 1440, 4320)
+CHECKPOINTS_MINUTES = (30, 60, 360, 1440, 4320)
 TRAINING_CHECKPOINT_MINUTES = 1440
 SUCCESS_MOVE_PERCENT = float(getattr(config, "AI_SUCCESS_MOVE_PERCENT", 20.0))
 MIN_TRAINING_SAMPLES = int(getattr(config, "AI_MIN_TRAINING_SAMPLES", 200))
@@ -85,6 +86,7 @@ def ensure_ai_schema() -> None:
                 max_price REAL NOT NULL,
                 min_price REAL NOT NULL,
                 success INTEGER,
+                status TEXT,
                 PRIMARY KEY (signal_id, checkpoint_minutes),
                 FOREIGN KEY (signal_id) REFERENCES ai_signals(signal_id)
             );
@@ -109,6 +111,17 @@ def ensure_ai_schema() -> None:
         if "volume" not in columns:
             cursor.execute(
                 "ALTER TABLE market_snapshots ADD COLUMN volume REAL"
+            )
+
+        outcome_columns = {
+            str(row[1])
+            for row in cursor.execute(
+                "PRAGMA table_info(signal_outcomes)"
+            ).fetchall()
+        }
+        if "status" not in outcome_columns:
+            cursor.execute(
+                "ALTER TABLE signal_outcomes ADD COLUMN status TEXT"
             )
 
         connection.commit()
@@ -520,6 +533,13 @@ def record_alert(alert: dict[str, Any]) -> str:
         "absolute_move": alert.get("absolute_move"),
         "url": alert.get("url"),
         "reasons": assessment.get("reasons", []),
+        "price_change_percent": alert.get("change_percent"),
+        "volume_change_percent": alert.get("volume_change_percent"),
+        "liquidity_change_percent": alert.get("liquidity_change_percent"),
+        "momentum": alert.get("momentum"),
+        "ai_quality": assessment.get("ai_quality"),
+        "ai_risk": assessment.get("ai_risk"),
+        "ml_probability": assessment.get("ml_probability"),
     }
 
     with closing(get_connection()) as connection:
@@ -548,6 +568,20 @@ def record_alert(alert: dict[str, Any]) -> str:
     return signal_id
 
 
+def _expected_direction(alert_type: str, market: dict[str, Any]) -> int:
+    """Return 1 for bullish signals and -1 for bearish signals."""
+    normalized = str(alert_type or "").upper()
+    if "DIP" in normalized:
+        return -1
+    if "PUMP" in normalized:
+        return 1
+
+    momentum = str(market.get("momentum") or "").upper()
+    if "DIP" in momentum or "BEAR" in momentum or "FALL" in momentum:
+        return -1
+    return 1
+
+
 def update_outcomes(markets: list[dict[str, Any]]) -> int:
     """Write due checkpoints using prices from the latest completed scan."""
     ensure_ai_schema()
@@ -558,14 +592,22 @@ def update_outcomes(markets: list[dict[str, Any]]) -> int:
     with closing(get_connection()) as connection:
         signals = connection.execute(
             """
-            SELECT signal_id, market_id, alert_type, created_at, entry_price
+            SELECT signal_id, market_id, alert_type, created_at, entry_price,
+                   metadata_json
             FROM ai_signals
             WHERE created_at >= ?
             """,
             ((now - timedelta(days=8)).isoformat(),),
         ).fetchall()
 
-        for signal_id, market_id, alert_type, created_at_raw, entry_price in signals:
+        for (
+            signal_id,
+            market_id,
+            alert_type,
+            created_at_raw,
+            entry_price,
+            metadata_json,
+        ) in signals:
             market = current.get(str(market_id))
             if market is None or not entry_price:
                 continue
@@ -577,8 +619,10 @@ def update_outcomes(markets: list[dict[str, Any]]) -> int:
                 continue
 
             elapsed_minutes = (now - created_at).total_seconds() / 60.0
+            entry_price = float(entry_price)
             current_price = float(market["price"])
             return_percent = ((current_price - entry_price) / entry_price) * 100.0
+
             extrema = connection.execute(
                 """
                 SELECT MAX(price), MIN(price)
@@ -589,25 +633,39 @@ def update_outcomes(markets: list[dict[str, Any]]) -> int:
             ).fetchone()
             max_price = float(extrema[0] if extrema and extrema[0] is not None else current_price)
             min_price = float(extrema[1] if extrema and extrema[1] is not None else current_price)
-            max_return_percent = ((max_price - entry_price) / entry_price) * 100.0
+
+            try:
+                original_signal = json.loads(metadata_json or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                original_signal = {}
+
+            direction = _expected_direction(
+                str(alert_type),
+                original_signal or market,
+            )
+            if direction > 0:
+                directional_return = ((max_price - entry_price) / entry_price) * 100.0
+            else:
+                directional_return = ((entry_price - min_price) / entry_price) * 100.0
 
             for checkpoint in CHECKPOINTS_MINUTES:
                 if elapsed_minutes < checkpoint:
                     continue
-                success = None
-                if checkpoint == TRAINING_CHECKPOINT_MINUTES:
-                    success = int(max_return_percent >= SUCCESS_MOVE_PERCENT)
+
+                status = classify_outcome(directional_return)
+                success = int(status == "SUCCESS") if checkpoint == TRAINING_CHECKPOINT_MINUTES else None
                 cursor = connection.execute(
                     """
                     INSERT OR IGNORE INTO signal_outcomes (
                         signal_id, checkpoint_minutes, measured_at, price,
                         return_percent, directional_return_percent,
-                        max_price, min_price, success
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        max_price, min_price, success, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         signal_id, checkpoint, now.isoformat(), current_price,
-                        return_percent, max_return_percent, max_price, min_price, success,
+                        return_percent, directional_return, max_price, min_price,
+                        success, status,
                     ),
                 )
                 inserted += cursor.rowcount
@@ -704,6 +762,7 @@ def get_ai_stats() -> dict[str, Any]:
         ).fetchone()[0]
 
     model = load_model()
+    memory_24h = get_memory_stats(1440)
     return {
         "snapshots": int(snapshots),
         "signals": int(signals),
@@ -713,4 +772,5 @@ def get_ai_stats() -> dict[str, Any]:
         "model_ready": model is not None,
         "model_samples": int(model.get("samples", 0)) if model else 0,
         "validation_accuracy": model.get("validation_accuracy") if model else None,
+        "memory_24h": memory_24h,
     }
