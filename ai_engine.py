@@ -99,6 +99,11 @@ def ensure_ai_schema() -> None:
                 validation_accuracy REAL,
                 details_json TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS ai_schema_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """
         )
 
@@ -122,6 +127,48 @@ def ensure_ai_schema() -> None:
         if "status" not in outcome_columns:
             cursor.execute(
                 "ALTER TABLE signal_outcomes ADD COLUMN status TEXT"
+            )
+
+        memory_version = cursor.execute(
+            "SELECT value FROM ai_schema_meta WHERE key = ?",
+            ("memory_outcome_version",),
+        ).fetchone()
+        if not memory_version or str(memory_version[0]) != "2.2":
+            rows = cursor.execute(
+                """
+                SELECT o.signal_id, o.checkpoint_minutes, o.return_percent,
+                       s.alert_type, s.metadata_json
+                FROM signal_outcomes o
+                JOIN ai_signals s ON s.signal_id = o.signal_id
+                """
+            ).fetchall()
+            for signal_id, checkpoint, market_return, alert_type, metadata_json in rows:
+                try:
+                    metadata = json.loads(metadata_json or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    metadata = {}
+                direction = _expected_direction(str(alert_type), metadata)
+                directional = float(market_return) * direction
+                status = classify_outcome(directional)
+                success = (
+                    int(status == "SUCCESS")
+                    if int(checkpoint) == TRAINING_CHECKPOINT_MINUTES
+                    else None
+                )
+                cursor.execute(
+                    """
+                    UPDATE signal_outcomes
+                    SET directional_return_percent = ?, status = ?, success = ?
+                    WHERE signal_id = ? AND checkpoint_minutes = ?
+                    """,
+                    (directional, status, success, signal_id, checkpoint),
+                )
+            cursor.execute(
+                """
+                INSERT INTO ai_schema_meta (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                ("memory_outcome_version", "2.2"),
             )
 
         connection.commit()
@@ -643,10 +690,9 @@ def update_outcomes(markets: list[dict[str, Any]]) -> int:
                 str(alert_type),
                 original_signal or market,
             )
-            if direction > 0:
-                directional_return = ((max_price - entry_price) / entry_price) * 100.0
-            else:
-                directional_return = ((entry_price - min_price) / entry_price) * 100.0
+            # Signed result at the checkpoint: positive means movement in the
+            # expected signal direction, negative means movement against it.
+            directional_return = return_percent * direction
 
             for checkpoint in CHECKPOINTS_MINUTES:
                 if elapsed_minutes < checkpoint:

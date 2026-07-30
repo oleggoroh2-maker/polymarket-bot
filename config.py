@@ -30,7 +30,7 @@ ALERT_COOLDOWN_HOURS = 24
 
 # AI Engine работает в теневом режиме и не блокирует уведомления.
 AI_MIN_TRAINING_SAMPLES = 200
-AI_SUCCESS_MOVE_PERCENT = 20.0
+AI_SUCCESS_MOVE_PERCENT = 10.0
 AI_SHOW_IN_ALERTS = True
 
 # Opportunity Engine: отдельные уведомления о качественных рынках,
@@ -70,5 +70,6 @@ AI_EXPLAIN_ENABLED = True
 AI_EXPLAIN_MAX_FACTORS = 8
 
 # AI Memory Foundation
-AI_PARTIAL_MOVE_PERCENT = 5.0
+AI_PARTIAL_MOVE_PERCENT = 3.0
+AI_NEUTRAL_MOVE_PERCENT = 3.0
 AI_MEMORY_PRIMARY_CHECKPOINT_MINUTES = 1440

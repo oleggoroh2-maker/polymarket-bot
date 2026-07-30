@@ -475,15 +475,32 @@ async def stats_action(
         f"ML-модель: {'готова ✅' if ai_stats['model_ready'] else 'накопление данных ⏳'}\n\n"
         "🧠 AI Memory (24ч)\n"
         f"Проверенных сигналов: {ai_stats['memory_24h']['total']}\n"
-        f"Успешных: {ai_stats['memory_24h']['successful']}\n"
-        f"Частичных: {ai_stats['memory_24h']['partial']}\n"
-        f"Неудачных: {ai_stats['memory_24h']['failed']}\n"
-        f"Точность: "
+        f"✅ Сильное продолжение: {ai_stats['memory_24h']['successful']}\n"
+        f"🟡 Частичное продолжение: {ai_stats['memory_24h']['partial']}\n"
+        f"⚪ Без движения: {ai_stats['memory_24h']['neutral']}\n"
+        f"❌ Против сигнала: {ai_stats['memory_24h']['failed']}\n"
+        f"Сильное продолжение: "
         + (
-            f"{ai_stats['memory_24h']['success_rate']:.1f}%"
+            f"{ai_stats['memory_24h']['success_rate']:.1f}%\n"
             if ai_stats['memory_24h']['success_rate'] is not None
-            else "накопление данных"
+            else "накопление данных\n"
         )
+        + "Любое продолжение: "
+        + (
+            f"{ai_stats['memory_24h']['continuation_rate']:.1f}%\n"
+            if ai_stats['memory_24h']['continuation_rate'] is not None
+            else "накопление данных\n"
+        )
+        + f"Средний результат: "
+        + (
+            f"{ai_stats['memory_24h']['average_directional_return']:+.1f}%\n"
+            if ai_stats['memory_24h']['average_directional_return'] is not None
+            else "накопление данных\n"
+        )
+        + f"PUMP: {ai_stats['memory_24h']['pump_successful']}/"
+        f"{ai_stats['memory_24h']['pump_total']} сильных\n"
+        f"DIP: {ai_stats['memory_24h']['dip_successful']}/"
+        f"{ai_stats['memory_24h']['dip_total']} сильных"
     )
 
 
@@ -493,6 +510,7 @@ def _audit_status_icon(status: str) -> str:
     return {
         "SUCCESS": "✅",
         "PARTIAL": "🟡",
+        "NEUTRAL": "⚪",
         "FAIL": "❌",
     }.get(str(status).upper(), "⚪")
 
@@ -518,6 +536,8 @@ def format_memory_audit_item(item: dict[str, Any], number: int) -> str:
     return (
         f"{number}. {_audit_status_icon(status)} {item['title']}\n"
         f"Тип: {direction} | Статус: {status}\n"
+        f"Сигнал: {str(item.get('created_at') or '')[:16].replace('T', ' ')} UTC\n"
+        f"Проверка: {str(item.get('measured_at') or '')[:16].replace('T', ' ')} UTC\n"
         f"Цена: {entry_cents:.2f}¢ → {measured_cents:.2f}¢\n"
         f"Факт рынка: {float(item['return_percent']):+.1f}%\n"
         f"В направлении сигнала: "
