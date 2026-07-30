@@ -86,3 +86,53 @@ def get_signal_memory(signal_id: str) -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+def get_recent_memory_audit(
+    checkpoint_minutes: int = 1440,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Return the latest evaluated signals for manual AI Memory audit."""
+    safe_limit = max(1, min(int(limit), 30))
+
+    with closing(get_connection()) as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                s.signal_id,
+                s.title,
+                s.alert_type,
+                s.alert_label,
+                s.created_at,
+                s.entry_price,
+                o.measured_at,
+                o.price,
+                o.return_percent,
+                o.directional_return_percent,
+                o.status
+            FROM signal_outcomes o
+            JOIN ai_signals s ON s.signal_id = o.signal_id
+            WHERE o.checkpoint_minutes = ?
+              AND o.status IS NOT NULL
+            ORDER BY o.measured_at DESC
+            LIMIT ?
+            """,
+            (int(checkpoint_minutes), safe_limit),
+        ).fetchall()
+
+    return [
+        {
+            "signal_id": str(row[0]),
+            "title": str(row[1]),
+            "alert_type": str(row[2]),
+            "alert_label": str(row[3]),
+            "created_at": row[4],
+            "entry_price": float(row[5]),
+            "measured_at": row[6],
+            "measured_price": float(row[7]),
+            "return_percent": float(row[8]),
+            "directional_return_percent": float(row[9]),
+            "status": str(row[10]),
+        }
+        for row in rows
+    ]

@@ -31,6 +31,7 @@ from database import (
 from scanner import scan
 from signal_engine import check_signals, format_alert
 from opportunity_engine import check_opportunities, format_opportunity
+from memory_engine import get_recent_memory_audit
 
 
 logging.basicConfig(
@@ -62,7 +63,7 @@ keyboard = ReplyKeyboardMarkup(
     [
         ["🔍 Сканировать", "⭐ Лучшая сделка"],
         ["📊 ТОП-5", "📈 Статистика"],
-        ["⭐ Мои события"],
+        ["🧠 Проверки AI", "⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
         ["ℹ Помощь"],
     ],
@@ -484,6 +485,83 @@ async def stats_action(
             else "накопление данных"
         )
     )
+
+
+# ---------------- AI MEMORY AUDIT ----------------
+
+def _audit_status_icon(status: str) -> str:
+    return {
+        "SUCCESS": "✅",
+        "PARTIAL": "🟡",
+        "FAIL": "❌",
+    }.get(str(status).upper(), "⚪")
+
+
+def _audit_direction_label(alert_type: str, alert_label: str) -> str:
+    combined = f"{alert_type} {alert_label}".upper()
+    if "DIP" in combined or "DROP" in combined or "BEAR" in combined:
+        return "DIP"
+    if "PUMP" in combined or "GROWTH" in combined or "BULL" in combined:
+        return "PUMP"
+    return alert_label or alert_type or "SIGNAL"
+
+
+def format_memory_audit_item(item: dict[str, Any], number: int) -> str:
+    entry_cents = float(item["entry_price"]) * 100.0
+    measured_cents = float(item["measured_price"]) * 100.0
+    status = str(item["status"]).upper()
+    direction = _audit_direction_label(
+        str(item.get("alert_type") or ""),
+        str(item.get("alert_label") or ""),
+    )
+
+    return (
+        f"{number}. {_audit_status_icon(status)} {item['title']}\n"
+        f"Тип: {direction} | Статус: {status}\n"
+        f"Цена: {entry_cents:.2f}¢ → {measured_cents:.2f}¢\n"
+        f"Факт рынка: {float(item['return_percent']):+.1f}%\n"
+        f"В направлении сигнала: "
+        f"{float(item['directional_return_percent']):+.1f}%"
+    )
+
+
+async def memory_audit_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+
+    await update.message.reply_text("🧠 Загружаю последние проверки...")
+
+    try:
+        items = await asyncio.to_thread(
+            get_recent_memory_audit,
+            1440,
+            10,
+        )
+    except Exception as error:
+        logger.exception("Ошибка аудита AI Memory")
+        await update.message.reply_text(f"❌ Ошибка:\n{error}")
+        return
+
+    if not items:
+        await update.message.reply_text(
+            "🧠 Пока нет завершённых проверок за 24 часа."
+        )
+        return
+
+    header = (
+        "🧠 Последние проверки AI Memory (24ч)\n\n"
+        "«Факт рынка» — обычное изменение цены.\n"
+        "«В направлении сигнала» — результат с учётом PUMP/DIP.\n\n"
+    )
+    body = "\n\n".join(
+        format_memory_audit_item(item, number)
+        for number, item in enumerate(items, start=1)
+    )
+
+    await update.message.reply_text(header + body)
 
 
 # ---------------- FAVORITE EVENTS ----------------
@@ -1004,6 +1082,9 @@ async def handle_buttons(
     elif text == "📈 Статистика":
         await stats_action(update, context)
 
+    elif text == "🧠 Проверки AI":
+        await memory_audit_action(update, context)
+
     elif text == "⭐ Мои события":
         await favorites_action(update, context)
 
@@ -1059,6 +1140,7 @@ async def handle_buttons(
             "⭐ Лучшая сделка — лучший рынок\n"
             "📊 ТОП-5 — пять лучших рынков\n"
             "📈 Статистика — сводка\n"
+            "🧠 Проверки AI — последние результаты AI Memory\n"
             "⭐ Мои события — избранные рынки и заметки\n"
             "🔔 Включить уведомления — подписаться\n"
             "🔕 Отключить уведомления — отписаться\n\n"
@@ -1128,6 +1210,13 @@ def main() -> None:
         CommandHandler(
             "start",
             start,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "memory_debug",
+            memory_audit_action,
         )
     )
 
