@@ -681,6 +681,11 @@ def scan() -> list[dict[str, Any]]:
                     ),
                     "momentum": momentum,
                     "score": score,
+                    "condition_id": market.get("conditionId") or market.get("condition_id"),
+                    "outcomes": market.get("outcomes"),
+                    "outcome_prices": market.get("outcomePrices"),
+                    "clob_token_ids": market.get("clobTokenIds"),
+                    "enable_order_book": market.get("enableOrderBook", True),
                     "url": build_market_url(
                         market
                     ),

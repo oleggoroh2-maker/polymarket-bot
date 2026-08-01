@@ -1,11 +1,13 @@
 import asyncio
 import logging
+from html import escape
 from typing import Any, Optional
 
-from telegram import ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.error import BadRequest, Forbidden
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -36,6 +38,7 @@ from signal_engine import check_signals, format_alert
 from opportunity_engine import check_opportunities, format_opportunity
 from memory_engine import get_recent_memory_audit
 from alert_formatter import format_calibrated_alert
+from market_structure import enrich_market_structure
 from calibration_engine import (
     calibrate_signal,
     get_calibration_report,
@@ -213,7 +216,7 @@ def format_favorite_alert(
     favorite: dict[str, Optional[str]],
 ) -> str:
     lines = [
-        "⭐ МОЕ СОБЫТИЕ",
+        "<b>⭐ МОЕ СОБЫТИЕ</b>",
         "",
         alert_text,
     ]
@@ -222,8 +225,8 @@ def format_favorite_alert(
     if note:
         lines.extend([
             "",
-            "📝 Моя заметка",
-            note,
+            "<b>📝 Моя заметка</b>",
+            escape(note),
         ])
 
     return "\n".join(lines)
@@ -297,6 +300,7 @@ async def scan_action(
     for signal in signals[:count]:
         await update.message.reply_text(
             format_signal(signal),
+            parse_mode="HTML",
             disable_web_page_preview=True,
         )
 
@@ -336,6 +340,7 @@ async def best_action(
     await update.message.reply_text(
         "🏆 Лучшая сделка\n\n"
         + format_signal(signals[0]),
+        parse_mode="HTML",
         disable_web_page_preview=True,
     )
 
@@ -379,6 +384,7 @@ async def top_action(
         await update.message.reply_text(
             f"#{number}\n\n"
             f"{format_signal(signal)}",
+            parse_mode="HTML",
             disable_web_page_preview=True,
         )
 
@@ -1059,6 +1065,7 @@ async def auto_scan_job(
         return
 
     for alert in alerts:
+        alert = await asyncio.to_thread(enrich_market_structure, alert)
         if alert.get("alert_type") == "AI_OPPORTUNITY":
             alert_text = format_opportunity(alert)
         else:
@@ -1087,9 +1094,41 @@ async def auto_scan_job(
                     )
 
             try:
+                market_url = str(alert.get("url") or "").strip()
+                reply_markup = None
+                button_rows = []
+                if market_url.startswith("http"):
+                    button_rows.append([
+                        InlineKeyboardButton("🌐 Polymarket", url=market_url),
+                        InlineKeyboardButton("📊 График", url=market_url),
+                    ])
+                if market_id is not None:
+                    alert_cache = context.application.bot_data.setdefault(
+                        "alert_cache", {}
+                    )
+                    alert_cache[str(market_id)] = alert
+                    # Keep the in-memory callback cache bounded.
+                    if len(alert_cache) > 500:
+                        for old_key in list(alert_cache)[:100]:
+                            alert_cache.pop(old_key, None)
+                    button_rows.append([
+                        InlineKeyboardButton(
+                            "⭐ В избранное",
+                            callback_data=f"fav:{market_id}",
+                        ),
+                        InlineKeyboardButton(
+                            "🔔 Следить",
+                            callback_data="follow",
+                        ),
+                    ])
+                if button_rows:
+                    reply_markup = InlineKeyboardMarkup(button_rows)
+
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=personalized_text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
                     disable_web_page_preview=True,
                 )
 
@@ -1115,6 +1154,60 @@ async def auto_scan_job(
                     "Ошибка отправки алерта подписчику %s",
                     chat_id,
                 )
+
+
+async def alert_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    query = update.callback_query
+    if query is None or query.message is None:
+        return
+
+    data = str(query.data or "")
+
+    if data == "follow":
+        chat = update.effective_chat
+        user = update.effective_user
+        if chat is None:
+            return
+        await asyncio.to_thread(
+            add_subscriber,
+            chat.id,
+            user.username if user else None,
+            user.first_name if user else None,
+        )
+        await query.answer("Уведомления включены ✅", show_alert=False)
+        return
+
+    if not data.startswith("fav:"):
+        await query.answer()
+        return
+
+    market_id = data.split(":", 1)[1]
+    cache = context.application.bot_data.get("alert_cache", {})
+    alert = cache.get(market_id)
+    if not isinstance(alert, dict):
+        await query.answer(
+            "Данные алерта устарели. Добавьте рынок через меню «Мои события».",
+            show_alert=True,
+        )
+        return
+
+    chat = update.effective_chat
+    if chat is None:
+        return
+
+
+    await asyncio.to_thread(
+        add_favorite_event,
+        chat.id,
+        market_id,
+        str(alert.get("title") or "Polymarket event"),
+        str(alert.get("url") or "") or None,
+        None,
+    )
+    await query.answer("Добавлено в избранное ⭐", show_alert=False)
 
 
 # ---------------- BUTTONS ----------------
@@ -1323,6 +1416,10 @@ def main() -> None:
             "memory_debug",
             memory_audit_action,
         )
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(alert_callback)
     )
 
     application.add_handler(
