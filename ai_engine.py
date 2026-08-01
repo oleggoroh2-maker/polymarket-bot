@@ -587,6 +587,12 @@ def record_alert(alert: dict[str, Any]) -> str:
         "ai_quality": assessment.get("ai_quality"),
         "ai_risk": assessment.get("ai_risk"),
         "ml_probability": assessment.get("ml_probability"),
+        "event_slug": alert.get("event_slug"),
+        "event_title": alert.get("event_title"),
+        "market_group_key": alert.get("market_group_key"),
+        "market_group_title": alert.get("market_group_title"),
+        "market_group_size": alert.get("market_group_size"),
+        "market_group_suppressed": alert.get("market_group_suppressed"),
     }
 
     with closing(get_connection()) as connection:

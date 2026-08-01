@@ -5,10 +5,16 @@ import config
 from ai_engine import enrich_signal, record_alert
 from calibration_engine import calibrate_signal
 from similarity_engine import analyze_similarity
+from market_group_engine import (
+    get_market_group_key,
+    select_group_representatives,
+)
 from alert_formatter import format_calibrated_alert
 from database import (
     alert_on_cooldown,
+    group_alert_on_cooldown,
     save_alert,
+    save_group_alert,
 )
 
 
@@ -355,7 +361,7 @@ def get_min_alert_liquidity(signal: dict[str, Any]) -> float:
 def check_signals(
     signals: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    new_alerts: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
 
     for signal in signals:
         liquidity = float(signal.get("liquidity") or 0)
@@ -365,15 +371,11 @@ def check_signals(
             continue
 
         market_id = str(signal.get("id") or "")
-
         if not market_id:
             continue
 
-        detected = detect_alerts(signal)
-
-        for alert_data in detected:
-            alert_type = alert_data["alert_type"]
-
+        for alert_data in detect_alerts(signal):
+            alert_type = str(alert_data["alert_type"])
             if alert_on_cooldown(
                 market_id,
                 alert_type,
@@ -381,32 +383,47 @@ def check_signals(
             ):
                 continue
 
-            save_alert(
-                market_id,
-                alert_type,
-            )
-
             prepared_alert = enrich_signal(
                 {
                     **signal,
                     **alert_data,
                 }
             )
-
             prepared_alert.update(analyze_similarity(prepared_alert))
             prepared_alert.update(calibrate_signal(prepared_alert))
+            candidates.append(prepared_alert)
 
-            try:
-                prepared_alert["ai_signal_id"] = record_alert(
-                    prepared_alert
-                )
-            except Exception:
-                # AI Data Layer не должен останавливать рабочие алерты.
-                prepared_alert["ai_signal_id"] = None
+    # Markets belonging to one Polymarket event are treated as one family.
+    # Only the strongest representative is stored and sent, so mutually
+    # exclusive outcomes do not distort AI Memory or flood subscribers.
+    grouped_candidates = select_group_representatives(candidates)
+    new_alerts: list[dict[str, Any]] = []
+    group_cooldown_hours = float(
+        getattr(config, "MARKET_GROUP_COOLDOWN_HOURS", 24)
+    )
 
-            new_alerts.append(
-                prepared_alert
-            )
+    for prepared_alert in grouped_candidates:
+        market_id = str(prepared_alert.get("id") or "")
+        alert_type = str(prepared_alert.get("alert_type") or "")
+        group_key = get_market_group_key(prepared_alert)
+
+        if group_alert_on_cooldown(
+            group_key,
+            "ANY_ALERT",
+            group_cooldown_hours,
+        ):
+            continue
+
+        save_alert(market_id, alert_type)
+        save_group_alert(group_key, "ANY_ALERT", market_id)
+
+        try:
+            prepared_alert["ai_signal_id"] = record_alert(prepared_alert)
+        except Exception:
+            # AI Data Layer не должен останавливать рабочие алерты.
+            prepared_alert["ai_signal_id"] = None
+
+        new_alerts.append(prepared_alert)
 
     priority = {
         "💎 VALUE OPPORTUNITY": 3,
@@ -416,14 +433,8 @@ def check_signals(
 
     new_alerts.sort(
         key=lambda item: (
-            -priority.get(
-                item["alert_label"],
-                0,
-            ),
-            -abs(
-                item.get("change_percent")
-                or 0
-            ),
+            -priority.get(item["alert_label"], 0),
+            -abs(item.get("change_percent") or 0),
             -item["score"],
         )
     )

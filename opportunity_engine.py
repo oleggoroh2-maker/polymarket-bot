@@ -5,8 +5,17 @@ import config
 from ai_engine import record_alert
 from calibration_engine import calibrate_signal
 from similarity_engine import analyze_similarity
+from market_group_engine import (
+    get_market_group_key,
+    select_group_representatives,
+)
 from alert_formatter import format_calibrated_alert
-from database import alert_on_cooldown, save_alert
+from database import (
+    alert_on_cooldown,
+    group_alert_on_cooldown,
+    save_alert,
+    save_group_alert,
+)
 
 
 AUTO_OPPORTUNITY_ALERTS = getattr(config, "AUTO_OPPORTUNITY_ALERTS", True)
@@ -170,14 +179,39 @@ def check_opportunities(
         )
     )
 
-    selected = candidates[:OPPORTUNITY_MAX_ALERTS_PER_SCAN]
+    enriched_candidates: list[dict[str, Any]] = []
+    for alert in candidates:
+        alert.update(analyze_similarity(alert))
+        alert.update(calibrate_signal(alert))
+        enriched_candidates.append(alert)
+
+    grouped = select_group_representatives(enriched_candidates)
+    grouped.sort(
+        key=lambda item: (
+            -int(item.get("opportunity_score") or 0),
+            -int(item.get("calibration_score") or 0),
+            -int(item.get("score") or 0),
+            -float(item.get("liquidity") or 0),
+        )
+    )
+    selected = grouped[:OPPORTUNITY_MAX_ALERTS_PER_SCAN]
     result: list[dict[str, Any]] = []
+    group_cooldown_hours = float(
+        getattr(config, "MARKET_GROUP_COOLDOWN_HOURS", 24)
+    )
 
     for alert in selected:
         market_id = str(alert["id"])
+        group_key = get_market_group_key(alert)
+        if group_alert_on_cooldown(
+            group_key,
+            "ANY_ALERT",
+            group_cooldown_hours,
+        ):
+            continue
+
         save_alert(market_id, "AI_OPPORTUNITY")
-        alert.update(analyze_similarity(alert))
-        alert.update(calibrate_signal(alert))
+        save_group_alert(group_key, "ANY_ALERT", market_id)
         try:
             alert["ai_signal_id"] = record_alert(alert)
         except Exception:

@@ -60,6 +60,25 @@ def init_db() -> None:
 
         cursor.execute(
             """
+            CREATE TABLE IF NOT EXISTS market_group_alerts (
+                group_key TEXT NOT NULL,
+                alert_family TEXT NOT NULL,
+                market_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (group_key, alert_family)
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_market_group_alerts_time
+            ON market_group_alerts (created_at)
+            """
+        )
+
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS subscribers (
                 chat_id INTEGER PRIMARY KEY,
                 username TEXT,
@@ -393,6 +412,13 @@ def cleanup_alerts(days: int = 30) -> None:
         connection.execute(
             """
             DELETE FROM alerts
+            WHERE created_at < ?
+            """,
+            (border,),
+        )
+        connection.execute(
+            """
+            DELETE FROM market_group_alerts
             WHERE created_at < ?
             """,
             (border,),
@@ -829,3 +855,58 @@ def cleanup_old_database_data(
         )
 
     return result
+
+def group_alert_on_cooldown(
+    group_key: str,
+    alert_family: str,
+    cooldown_hours: float,
+) -> bool:
+    if not group_key:
+        return False
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=float(cooldown_hours))
+    with closing(get_connection()) as connection:
+        row = connection.execute(
+            """
+            SELECT created_at
+            FROM market_group_alerts
+            WHERE group_key = ? AND alert_family = ?
+            """,
+            (str(group_key), str(alert_family)),
+        ).fetchone()
+
+    if row is None:
+        return False
+
+    try:
+        created_at = datetime.fromisoformat(str(row[0]))
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return False
+
+    return created_at >= cutoff
+
+
+def save_group_alert(
+    group_key: str,
+    alert_family: str,
+    market_id: str,
+) -> None:
+    if not group_key:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+    with closing(get_connection()) as connection:
+        connection.execute(
+            """
+            INSERT INTO market_group_alerts (
+                group_key, alert_family, market_id, created_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(group_key, alert_family) DO UPDATE SET
+                market_id = excluded.market_id,
+                created_at = excluded.created_at
+            """,
+            (str(group_key), str(alert_family), str(market_id), now),
+        )
+        connection.commit()
