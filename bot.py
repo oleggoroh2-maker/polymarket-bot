@@ -21,17 +21,25 @@ from database import (
     delete_favorite_event,
     disable_subscriber,
     get_active_subscribers,
+    get_active_subscriber_profiles,
     get_favorite_event,
     get_favorite_events,
     get_subscribers_count,
+    get_subscriber_quality_mode,
     init_db,
     is_subscriber_active,
     update_favorite_note,
+    set_subscriber_quality_mode,
 )
 from scanner import scan
 from signal_engine import check_signals, format_alert
 from opportunity_engine import check_opportunities, format_opportunity
 from memory_engine import get_recent_memory_audit
+from calibration_engine import (
+    calibrate_signal,
+    get_calibration_report,
+    signal_passes_mode,
+)
 
 
 logging.basicConfig(
@@ -63,7 +71,8 @@ keyboard = ReplyKeyboardMarkup(
     [
         ["🔍 Сканировать", "⭐ Лучшая сделка"],
         ["📊 ТОП-5", "📈 Статистика"],
-        ["🧠 Проверки AI", "⭐ Мои события"],
+        ["🧠 Проверки AI", "⚙️ Качество сигналов"],
+        ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
         ["ℹ Помощь"],
     ],
@@ -75,6 +84,16 @@ favorites_keyboard = ReplyKeyboardMarkup(
     [
         ["➕ Добавить событие", "📋 Мои события"],
         ["✏️ Изменить заметку", "🗑 Удалить событие"],
+        ["⬅️ Главное меню"],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
+
+quality_keyboard = ReplyKeyboardMarkup(
+    [
+        ["🟢 Все сигналы", "🟡 Только хорошие"],
+        ["⭐ Только Premium", "📊 Отчёт калибровки"],
         ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
@@ -96,52 +115,38 @@ def format_percent(
 def format_signal(
     signal: dict[str, Any],
 ) -> str:
+    calibrated = {**signal, **calibrate_signal(signal)}
+    badge = calibrated["calibration_badge"]
+    stars = calibrated["calibration_stars"]
+    confidence = calibrated["calibration_confidence"]
+
     lines = [
-        f"⭐ Score: {signal['score']}/100",
+        f"📊 {calibrated['title']}",
+        f"{badge}  {stars} ({confidence:.0f}/100)",
+        "",
+        f"💰 Цена: {float(calibrated['price']) * 100:.2f}¢",
+        f"💧 Ликвидность: ${float(calibrated.get('liquidity') or 0):,.0f}",
+        f"⭐ Score: {int(calibrated.get('score') or 0)}/100",
+        f"🤖 AI Quality: {int(calibrated.get('ai_quality') or 0)}/100",
+        f"⚠️ AI Risk: {int(calibrated.get('ai_risk') or 0)}/100",
     ]
-
-    ai_quality = signal.get("ai_quality")
-    ai_risk = signal.get("ai_risk")
-    ml_probability = signal.get("ml_probability")
-
-    reasons = signal.get("opportunity_reasons") or []
-    if reasons:
-        lines.extend(["", "Почему рынок выделен:"])
-        lines.extend(f"• {r}" for r in reasons)
-
-    if ai_quality is not None:
-        lines.append(f"🤖 AI Quality: {int(ai_quality)}/100")
-    if ai_risk is not None:
-        lines.append(f"⚠️ AI Risk: {int(ai_risk)}/100")
+    ml_probability = calibrated.get("ml_probability")
     if ml_probability is not None:
         lines.append(f"🧠 ML: {float(ml_probability) * 100:.1f}%")
-
     lines.extend([
         "",
-        f"📊 {signal['title']}",
+        f"📉 Momentum: {calibrated.get('momentum', '—')}",
+        f"🏷 {calibrated.get('category', '—')}",
+        f"⏳ {int(calibrated.get('days_left') or 0)} дней",
         "",
-        f"💰 Цена: {signal['price'] * 100:.2f}¢",
-        f"💧 Ликвидность: ${signal['liquidity']:,.0f}",
-        f"📉 Momentum: {signal['momentum']}",
-        f"🏷 {signal['category']}",
-        f"⏳ {signal['days_left']} дней",
-        "",
-        f"5м: {format_percent(signal.get('change_5m'))}",
-        f"15м: {format_percent(signal.get('change_15m'))}",
-        f"1ч: {format_percent(signal.get('change_1h'))}",
-        f"24ч: {format_percent(signal.get('change_24h'))}",
+        f"5м: {format_percent(calibrated.get('change_5m'))}",
+        f"15м: {format_percent(calibrated.get('change_15m'))}",
+        f"1ч: {format_percent(calibrated.get('change_1h'))}",
+        f"24ч: {format_percent(calibrated.get('change_24h'))}",
     ])
-
-    url = signal.get("url")
-
+    url = calibrated.get("url")
     if url:
-        lines.extend(
-            [
-                "",
-                f"🌐 {url}",
-            ]
-        )
-
+        lines.extend(["", f"🌐 {url}"])
     return "\n".join(lines)
 
 
@@ -584,6 +589,80 @@ async def memory_audit_action(
     await update.message.reply_text(header + body)
 
 
+# ---------------- SIGNAL QUALITY ----------------
+
+def _quality_mode_text(mode: str) -> str:
+    return {
+        "ALL": "🟢 Все сигналы",
+        "GOOD": "🟡 Только хорошие",
+        "PREMIUM": "⭐ Только Premium",
+    }.get(str(mode).upper(), "🟢 Все сигналы")
+
+
+async def quality_settings_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+    mode = await asyncio.to_thread(
+        get_subscriber_quality_mode,
+        update.effective_chat.id,
+    )
+    await update.message.reply_text(
+        "⚙️ Качество сигналов\n\n"
+        f"Текущий режим: {_quality_mode_text(mode)}\n\n"
+        "Все — максимальное количество алертов.\n"
+        "Хорошие — GOOD и PREMIUM.\n"
+        "Premium — только самые сильные по истории и AI.",
+        reply_markup=quality_keyboard,
+    )
+
+
+async def set_quality_mode_action(
+    update: Update,
+    mode: str,
+) -> None:
+    if update.message is None or update.effective_chat is None:
+        return
+    await asyncio.to_thread(
+        set_subscriber_quality_mode,
+        update.effective_chat.id,
+        mode,
+    )
+    await update.message.reply_text(
+        f"✅ Режим установлен: {_quality_mode_text(mode)}",
+        reply_markup=keyboard,
+    )
+
+
+async def calibration_report_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+    report = await asyncio.to_thread(get_calibration_report)
+    if not report.get("total"):
+        await update.message.reply_text(
+            "📊 Пока недостаточно завершённых проверок.",
+            reply_markup=quality_keyboard,
+        )
+        return
+    await update.message.reply_text(
+        "📊 AI Calibration v1.0\n\n"
+        f"Исторических проверок: {report['total']}\n"
+        f"Сильное продолжение: {report['strong_rate']:.1f}%\n"
+        f"Любое продолжение: {report['continuation_rate']:.1f}%\n"
+        f"Средний результат: {report['average']:+.1f}%\n\n"
+        f"🟢 GOOD: от {report['good_threshold']:.0f}/100\n"
+        f"⭐ PREMIUM: от {report['premium_threshold']:.0f}/100\n\n"
+        "Калибровка использует Score, AI Quality, AI Risk, ML, "
+        "силу движения, объём, ликвидность и похожие исторические случаи.",
+        reply_markup=quality_keyboard,
+    )
+
+
 # ---------------- FAVORITE EVENTS ----------------
 
 async def favorites_action(
@@ -918,6 +997,7 @@ async def handle_updated_note(
     note = None if text.strip() == "-" else text.strip()
     updated = await asyncio.to_thread(
         update_favorite_note,
+    set_subscriber_quality_mode,
         update.effective_chat.id,
         str(market_id),
         note,
@@ -986,7 +1066,7 @@ async def auto_scan_job(
     )
 
     subscribers = await asyncio.to_thread(
-        get_active_subscribers
+        get_active_subscriber_profiles
     )
 
     if not subscribers:
@@ -1001,7 +1081,11 @@ async def auto_scan_job(
 
         market_id = get_market_id(alert)
 
-        for chat_id in subscribers:
+        for subscriber in subscribers:
+            chat_id = int(subscriber["chat_id"])
+            quality_mode = str(subscriber.get("quality_mode") or "ALL")
+            if not signal_passes_mode(alert, quality_mode):
+                continue
             personalized_text = alert_text
 
             if market_id is not None:
@@ -1105,6 +1189,21 @@ async def handle_buttons(
     elif text == "🧠 Проверки AI":
         await memory_audit_action(update, context)
 
+    elif text == "⚙️ Качество сигналов":
+        await quality_settings_action(update, context)
+
+    elif text == "🟢 Все сигналы":
+        await set_quality_mode_action(update, "ALL")
+
+    elif text == "🟡 Только хорошие":
+        await set_quality_mode_action(update, "GOOD")
+
+    elif text == "⭐ Только Premium":
+        await set_quality_mode_action(update, "PREMIUM")
+
+    elif text == "📊 Отчёт калибровки":
+        await calibration_report_action(update, context)
+
     elif text == "⭐ Мои события":
         await favorites_action(update, context)
 
@@ -1161,6 +1260,7 @@ async def handle_buttons(
             "📊 ТОП-5 — пять лучших рынков\n"
             "📈 Статистика — сводка\n"
             "🧠 Проверки AI — последние результаты AI Memory\n"
+            "⚙️ Качество сигналов — фильтр ALL/GOOD/PREMIUM\n"
             "⭐ Мои события — избранные рынки и заметки\n"
             "🔔 Включить уведомления — подписаться\n"
             "🔕 Отключить уведомления — отписаться\n\n"

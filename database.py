@@ -66,7 +66,8 @@ def init_db() -> None:
                 first_name TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                quality_mode TEXT NOT NULL DEFAULT 'ALL'
             )
             """
         )
@@ -114,6 +115,19 @@ def init_db() -> None:
                 cursor.execute(
                     "ALTER TABLE signal_outcomes ADD COLUMN status TEXT"
                 )
+
+
+        subscriber_columns = {
+            str(row[1])
+            for row in cursor.execute(
+                "PRAGMA table_info(subscribers)"
+            ).fetchall()
+        }
+        if "quality_mode" not in subscriber_columns:
+            cursor.execute(
+                "ALTER TABLE subscribers "
+                "ADD COLUMN quality_mode TEXT NOT NULL DEFAULT 'ALL'"
+            )
 
         connection.commit()
 
@@ -466,6 +480,48 @@ def get_active_subscribers() -> list[int]:
         ).fetchall()
 
     return [int(row[0]) for row in rows]
+
+
+def get_active_subscriber_profiles() -> list[dict[str, object]]:
+    with closing(get_connection()) as connection:
+        rows = connection.execute(
+            """
+            SELECT chat_id, COALESCE(quality_mode, 'ALL')
+            FROM subscribers
+            WHERE is_active = 1
+            ORDER BY created_at ASC
+            """
+        ).fetchall()
+    return [
+        {"chat_id": int(row[0]), "quality_mode": str(row[1] or "ALL").upper()}
+        for row in rows
+    ]
+
+
+def set_subscriber_quality_mode(chat_id: int, mode: str) -> None:
+    normalized = str(mode or "ALL").upper()
+    if normalized not in {"ALL", "GOOD", "PREMIUM"}:
+        raise ValueError("Unsupported quality mode")
+    now = datetime.now(timezone.utc).isoformat()
+    with closing(get_connection()) as connection:
+        connection.execute(
+            """
+            UPDATE subscribers
+            SET quality_mode = ?, updated_at = ?
+            WHERE chat_id = ?
+            """,
+            (normalized, now, int(chat_id)),
+        )
+        connection.commit()
+
+
+def get_subscriber_quality_mode(chat_id: int) -> str:
+    with closing(get_connection()) as connection:
+        row = connection.execute(
+            "SELECT COALESCE(quality_mode, 'ALL') FROM subscribers WHERE chat_id = ?",
+            (int(chat_id),),
+        ).fetchone()
+    return str(row[0] if row else "ALL").upper()
 
 
 def get_subscribers_count() -> int:

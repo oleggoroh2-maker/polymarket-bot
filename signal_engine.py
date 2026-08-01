@@ -4,6 +4,7 @@ import config
 
 from ai_engine import enrich_signal, record_alert
 from explain_engine import format_ai_explain
+from calibration_engine import calibrate_signal
 from database import (
     alert_on_cooldown,
     save_alert,
@@ -391,6 +392,8 @@ def check_signals(
                 }
             )
 
+            prepared_alert.update(calibrate_signal(prepared_alert))
+
             try:
                 prepared_alert["ai_signal_id"] = record_alert(
                     prepared_alert
@@ -430,95 +433,78 @@ def check_signals(
 def format_alert(
     alert: dict[str, Any],
 ) -> str:
+    badge = str(alert.get("calibration_badge") or "🟡 WATCH")
+    stars = str(alert.get("calibration_stars") or "★☆☆☆☆")
+    confidence = float(alert.get("calibration_confidence") or 0.0)
+
     lines = [
-        alert["alert_label"],
+        f"{alert['alert_label']}  {badge}",
+        f"{stars} ({confidence:.0f}/100)",
         "",
         f"📊 {alert['title']}",
         "",
     ]
 
     old_price = alert.get("old_price")
-    current_price = float(
-        alert["current_price"]
-    )
-
+    current_price = float(alert["current_price"])
     if old_price is not None:
         lines.append(
-            "💰 Цена: "
-            f"{float(old_price) * 100:.2f}¢ → "
+            f"💰 Цена: {float(old_price) * 100:.2f}¢ → "
             f"{current_price * 100:.2f}¢"
         )
     else:
-        lines.append(
-            "💰 Цена: "
-            f"{current_price * 100:.2f}¢"
-        )
+        lines.append(f"💰 Цена: {current_price * 100:.2f}¢")
 
     change = alert.get("change_percent")
-
     if change is not None:
-        lines.append(
-            f"📈 Изменение: {change:+.1f}%"
-        )
-
+        lines.append(f"📈 Изменение: {float(change):+.1f}%")
     timeframe = alert.get("timeframe")
-
     if timeframe:
-        lines.append(
-            f"⏱ Период: {timeframe}"
-        )
+        lines.append(f"⏱ Период: {timeframe}")
 
-    lines.extend(
-        [
-            (
-                "💧 Ликвидность: "
-                f"${alert['liquidity']:,.0f}"
-            ),
-            f"⭐ Score: {alert['score']}/100",
-        ]
-    )
+    lines.extend([
+        f"💧 Ликвидность: ${float(alert.get('liquidity') or 0):,.0f}",
+        f"⭐ Score: {int(alert.get('score') or 0)}/100",
+        f"🤖 AI Quality: {int(alert.get('ai_quality') or 0)}/100",
+        f"⚠️ AI Risk: {int(alert.get('ai_risk') or 0)}/100",
+    ])
 
-    if getattr(config, "AI_SHOW_IN_ALERTS", True):
-        ai_quality = alert.get("ai_quality")
-        ai_risk = alert.get("ai_risk")
-        ml_probability = alert.get("ml_probability")
+    ml_probability = alert.get("ml_probability")
+    if ml_probability is not None:
+        lines.append(f"🧠 ML: {float(ml_probability) * 100:.1f}%")
+    else:
+        lines.append("🧠 ML: накопление данных")
 
-        if ai_quality is not None:
-            lines.append(f"🤖 AI Quality: {int(ai_quality)}/100")
-        if ai_risk is not None:
-            lines.append(f"⚠️ AI Risk: {int(ai_risk)}/100")
-        if ml_probability is not None:
-            lines.append(f"🧠 ML: {float(ml_probability) * 100:.1f}%")
-        else:
-            lines.append("🧠 ML: накопление данных")
-
+    # Telegram does not support a smaller font inside one message,
+    # so the analytical half is intentionally compact.
+    lines.extend(["", "────────────"] )
     if getattr(config, "AI_EXPLAIN_ENABLED", True):
-        lines.extend([
-            "",
+        lines.append(
             format_ai_explain(
                 alert,
-                max_factors=int(getattr(config, "AI_EXPLAIN_MAX_FACTORS", 5)),
-            ),
-        ])
-
-    lines.extend(
-        [
-            "",
-            f"🏷 {alert['category']}",
-            f"⏳ {alert['days_left']} дней",
-        ]
-    )
-
-    url = alert.get("url")
-
-    if url:
-        lines.extend(
-            [
-                "",
-                f"🌐 {url}",
-            ]
+                max_factors=int(getattr(config, "AI_EXPLAIN_MAX_FACTORS", 8)),
+            )
         )
 
+    samples = int(alert.get("calibration_samples") or 0)
+    strong_rate = alert.get("calibration_strong_rate")
+    if samples and strong_rate is not None:
+        lines.extend([
+            "",
+            "🏆 КАЛИБРОВКА",
+            f"Похожих случаев: {samples}",
+            f"Сильное продолжение: {float(strong_rate):.1f}%",
+            f"Качество: {badge}",
+        ])
+
+    lines.extend([
+        "",
+        f"🏷 {alert.get('category', '—')}",
+        f"⏳ {int(alert.get('days_left') or 0)} дней",
+    ])
+    url = alert.get("url")
+    if url:
+        lines.extend(["", f"🌐 {url}"])
     return "\n".join(lines)
 
 
