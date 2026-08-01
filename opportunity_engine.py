@@ -4,6 +4,7 @@ import config
 
 from ai_engine import record_alert
 from calibration_engine import calibrate_signal
+from similarity_engine import analyze_similarity
 from alert_formatter import format_calibrated_alert
 from database import alert_on_cooldown, save_alert
 
@@ -175,6 +176,7 @@ def check_opportunities(
     for alert in selected:
         market_id = str(alert["id"])
         save_alert(market_id, "AI_OPPORTUNITY")
+        alert.update(analyze_similarity(alert))
         alert.update(calibrate_signal(alert))
         try:
             alert["ai_signal_id"] = record_alert(alert)

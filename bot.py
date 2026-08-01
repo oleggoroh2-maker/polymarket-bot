@@ -39,6 +39,7 @@ from opportunity_engine import check_opportunities, format_opportunity
 from memory_engine import get_recent_memory_audit
 from alert_formatter import format_calibrated_alert
 from market_structure import enrich_market_structure
+from similarity_engine import analyze_similarity
 from calibration_engine import (
     calibrate_signal,
     get_calibration_report,
@@ -119,7 +120,9 @@ def format_percent(
 def format_signal(
     signal: dict[str, Any],
 ) -> str:
-    calibrated = {**signal, **calibrate_signal(signal)}
+    similarity = analyze_similarity(signal)
+    calibrated = {**signal, **similarity}
+    calibrated.update(calibrate_signal(calibrated))
     primary_change = calibrated.get("change")
     if primary_change is None:
         for key in ("change_5m", "change_15m", "change_1h", "change_24h"):

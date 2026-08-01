@@ -166,6 +166,13 @@ def format_calibrated_alert(
     liquidity = _num(alert.get("liquidity"))
     samples = int(_num(alert.get("calibration_samples")))
     strong_rate = _optional_num(alert.get("calibration_strong_rate"))
+    similarity_samples = int(_num(alert.get("similarity_samples")))
+    similarity_average = _optional_num(alert.get("similarity_average"))
+    similarity_strong = _optional_num(alert.get("similarity_strong_rate"))
+    similarity_continuation = _optional_num(alert.get("similarity_continuation_rate"))
+    similarity_return = _optional_num(alert.get("similarity_average_return"))
+    similarity_best_title = alert.get("similarity_best_title")
+    similarity_best_return = _optional_num(alert.get("similarity_best_return"))
     timeframe = escape(str(alert.get("timeframe") or "—"))
     momentum = escape(str(alert.get("momentum") or "—"))
     title = escape(_short_title(alert.get("title")))
@@ -194,7 +201,12 @@ def format_calibrated_alert(
     if ml is not None:
         header.append(f"{_ml_icon(ml)} ML {ml * 100:.1f}%")
 
-    if samples and strong_rate is not None:
+    if similarity_samples and similarity_strong is not None:
+        history_text = f"🧠 Похожие: <b>{similarity_strong:.1f}%</b> сильных из {similarity_samples}"
+        if similarity_average is not None:
+            history_text += f" · сходство {similarity_average:.0f}%"
+        header.extend(["", history_text])
+    elif samples and strong_rate is not None:
         header.extend(["", f"🏆 История: <b>{strong_rate:.1f}%</b> из {samples} случаев"])
 
     # Short conclusion from existing explain engine: use only text after its conclusion heading.
@@ -231,6 +243,22 @@ def format_calibrated_alert(
     structure = _structure_lines(alert)
     if structure:
         details.extend(["", *structure])
+
+    if similarity_samples and similarity_strong is not None:
+        details.extend([
+            "",
+            "<b>🧠 ПОХОЖИЕ СИГНАЛЫ</b>",
+            f"Найдено: {similarity_samples}",
+            f"Среднее сходство: {similarity_average:.1f}%" if similarity_average is not None else "Среднее сходство: —",
+            f"Сильное продолжение: {similarity_strong:.1f}%",
+            f"Любое продолжение: {similarity_continuation:.1f}%" if similarity_continuation is not None else "Любое продолжение: —",
+            f"Средний результат: {_signed(similarity_return)}" if similarity_return is not None else "Средний результат: —",
+        ])
+        if similarity_best_title and similarity_best_return is not None:
+            details.extend([
+                f"Лучший аналог: {escape(_short_title(similarity_best_title, 70))}",
+                f"Результат аналога: {_signed(similarity_best_return)}",
+            ])
 
     details.extend([
         "",

@@ -4,6 +4,7 @@ import config
 
 from ai_engine import enrich_signal, record_alert
 from calibration_engine import calibrate_signal
+from similarity_engine import analyze_similarity
 from alert_formatter import format_calibrated_alert
 from database import (
     alert_on_cooldown,
@@ -392,6 +393,7 @@ def check_signals(
                 }
             )
 
+            prepared_alert.update(analyze_similarity(prepared_alert))
             prepared_alert.update(calibrate_signal(prepared_alert))
 
             try:
