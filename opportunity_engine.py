@@ -3,8 +3,8 @@ from typing import Any, Iterable
 import config
 
 from ai_engine import record_alert
-from explain_engine import format_ai_explain
 from calibration_engine import calibrate_signal
+from alert_formatter import format_calibrated_alert
 from database import alert_on_cooldown, save_alert
 
 
@@ -186,70 +186,5 @@ def check_opportunities(
 
 
 def format_opportunity(alert: dict[str, Any]) -> str:
-    badge = str(alert.get("calibration_badge") or "🟡 WATCH")
-    stars = str(alert.get("calibration_stars") or "★☆☆☆☆")
-    confidence = float(alert.get("calibration_confidence") or 0.0)
-    old_price = alert.get("old_price")
-    current_price = float(alert.get("current_price", alert.get("price") or 0))
-
-    lines = [
-        f"⭐ AI OPPORTUNITY  {badge}",
-        f"{stars} ({confidence:.0f}/100)",
-        "",
-        f"📊 {alert['title']}",
-        "",
-    ]
-    if old_price is not None:
-        lines.append(
-            f"💰 Цена: {float(old_price) * 100:.2f}¢ → {current_price * 100:.2f}¢"
-        )
-    else:
-        lines.append(f"💰 Цена: {current_price * 100:.2f}¢")
-    change = alert.get("change_percent")
-    if change is not None:
-        lines.append(f"📈 Изменение: {float(change):+.1f}%")
-    lines.extend([
-        f"⏱ Период: {alert.get('timeframe') or 'оценка возможности'}",
-        f"💧 Ликвидность: ${float(alert.get('liquidity') or 0):,.0f}",
-        f"⭐ Score: {int(alert.get('score') or 0)}/100",
-        f"🤖 AI Quality: {int(alert.get('ai_quality') or 0)}/100",
-        f"⚠️ AI Risk: {int(alert.get('ai_risk') or 0)}/100",
-        f"🎯 Opportunity: {int(alert.get('opportunity_score') or 0)}/100",
-    ])
-    ml_probability = alert.get("ml_probability")
-    if ml_probability is not None:
-        lines.append(f"🧠 ML: {float(ml_probability) * 100:.1f}%")
-    else:
-        lines.append("🧠 ML: накопление данных")
-
-    lines.extend(["", "────────────"])
-    if getattr(config, "AI_EXPLAIN_ENABLED", True):
-        lines.append(
-            format_ai_explain(
-                alert,
-                max_factors=int(getattr(config, "AI_EXPLAIN_MAX_FACTORS", 8)),
-            )
-        )
-
-    samples = int(alert.get("calibration_samples") or 0)
-    strong_rate = alert.get("calibration_strong_rate")
-    if samples and strong_rate is not None:
-        lines.extend([
-            "",
-            "🏆 КАЛИБРОВКА",
-            f"Похожих случаев: {samples}",
-            f"Сильное продолжение: {float(strong_rate):.1f}%",
-            f"Качество: {badge}",
-        ])
-
-    lines.extend([
-        "",
-        f"📉 Momentum: {alert.get('momentum', '—')}",
-        f"🏷 {alert.get('category', '—')}",
-        f"⏳ {int(alert.get('days_left') or 0)} дней",
-    ])
-    url = alert.get("url")
-    if url:
-        lines.extend(["", f"🌐 {url}"])
-    return "\n".join(lines)
+    return format_calibrated_alert(alert, opportunity=True)
 

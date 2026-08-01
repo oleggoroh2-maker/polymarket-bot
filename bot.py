@@ -35,6 +35,7 @@ from scanner import scan
 from signal_engine import check_signals, format_alert
 from opportunity_engine import check_opportunities, format_opportunity
 from memory_engine import get_recent_memory_audit
+from alert_formatter import format_calibrated_alert
 from calibration_engine import (
     calibrate_signal,
     get_calibration_report,
@@ -116,38 +117,22 @@ def format_signal(
     signal: dict[str, Any],
 ) -> str:
     calibrated = {**signal, **calibrate_signal(signal)}
-    badge = calibrated["calibration_badge"]
-    stars = calibrated["calibration_stars"]
-    confidence = calibrated["calibration_confidence"]
+    primary_change = calibrated.get("change")
+    if primary_change is None:
+        for key in ("change_5m", "change_15m", "change_1h", "change_24h"):
+            if calibrated.get(key) is not None:
+                primary_change = calibrated.get(key)
+                break
 
-    lines = [
-        f"📊 {calibrated['title']}",
-        f"{badge}  {stars} ({confidence:.0f}/100)",
-        "",
-        f"💰 Цена: {float(calibrated['price']) * 100:.2f}¢",
-        f"💧 Ликвидность: ${float(calibrated.get('liquidity') or 0):,.0f}",
-        f"⭐ Score: {int(calibrated.get('score') or 0)}/100",
-        f"🤖 AI Quality: {int(calibrated.get('ai_quality') or 0)}/100",
-        f"⚠️ AI Risk: {int(calibrated.get('ai_risk') or 0)}/100",
-    ]
-    ml_probability = calibrated.get("ml_probability")
-    if ml_probability is not None:
-        lines.append(f"🧠 ML: {float(ml_probability) * 100:.1f}%")
-    lines.extend([
-        "",
-        f"📉 Momentum: {calibrated.get('momentum', '—')}",
-        f"🏷 {calibrated.get('category', '—')}",
-        f"⏳ {int(calibrated.get('days_left') or 0)} дней",
-        "",
-        f"5м: {format_percent(calibrated.get('change_5m'))}",
-        f"15м: {format_percent(calibrated.get('change_15m'))}",
-        f"1ч: {format_percent(calibrated.get('change_1h'))}",
-        f"24ч: {format_percent(calibrated.get('change_24h'))}",
-    ])
-    url = calibrated.get("url")
-    if url:
-        lines.extend(["", f"🌐 {url}"])
-    return "\n".join(lines)
+    prepared = {
+        **calibrated,
+        "alert_label": "📊 MARKET SIGNAL",
+        "alert_type": "MARKET_SIGNAL",
+        "current_price": calibrated.get("price"),
+        "change_percent": primary_change,
+        "timeframe": "текущий скан",
+    }
+    return format_calibrated_alert(prepared, opportunity=False)
 
 
 async def run_scan_in_thread() -> list[dict[str, Any]]:
