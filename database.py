@@ -102,6 +102,41 @@ def init_db() -> None:
 
         cursor.execute(
             """
+            CREATE TABLE IF NOT EXISTS smart_cooldown_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                decision TEXT NOT NULL,
+                category TEXT NOT NULL,
+                reason TEXT,
+                identity_type TEXT,
+                signal_family TEXT NOT NULL,
+                market_id TEXT,
+                event_id TEXT,
+                title TEXT,
+                price REAL NOT NULL DEFAULT 0,
+                previous_price REAL,
+                price_move_percent REAL,
+                remaining_hours REAL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_smart_cooldown_events_time
+            ON smart_cooldown_events (created_at)
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_smart_cooldown_events_decision
+            ON smart_cooldown_events (decision, created_at)
+            """
+        )
+
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS subscribers (
                 chat_id INTEGER PRIMARY KEY,
                 username TEXT,
@@ -449,6 +484,13 @@ def cleanup_alerts(days: int = 30) -> None:
         connection.execute(
             """
             DELETE FROM smart_cooldowns
+            WHERE created_at < ?
+            """,
+            (border,),
+        )
+        connection.execute(
+            """
+            DELETE FROM smart_cooldown_events
             WHERE created_at < ?
             """,
             (border,),
@@ -1018,3 +1060,123 @@ def save_smart_cooldown_records(
             rows,
         )
         connection.commit()
+
+
+
+def record_smart_cooldown_event(
+    *,
+    decision: str,
+    category: str,
+    reason: str,
+    identity_type: str,
+    signal_family: str,
+    market_id: str,
+    event_id: str,
+    title: str,
+    price: float,
+    previous_price: Optional[float] = None,
+    price_move_percent: Optional[float] = None,
+    remaining_hours: Optional[float] = None,
+) -> None:
+    """Write one Smart Cooldown decision to the analytics journal."""
+    now = datetime.now(timezone.utc).isoformat()
+    with closing(get_connection()) as connection:
+        connection.execute(
+            """
+            INSERT INTO smart_cooldown_events (
+                decision, category, reason, identity_type, signal_family,
+                market_id, event_id, title, price, previous_price,
+                price_move_percent, remaining_hours, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(decision),
+                str(category),
+                str(reason),
+                str(identity_type),
+                str(signal_family),
+                str(market_id),
+                str(event_id),
+                str(title),
+                float(price or 0.0),
+                None if previous_price is None else float(previous_price),
+                None if price_move_percent is None else float(price_move_percent),
+                None if remaining_hours is None else float(remaining_hours),
+                now,
+            ),
+        )
+        connection.commit()
+
+
+def get_smart_cooldown_stats(hours: int = 24) -> dict[str, object]:
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(hours=max(1, int(hours)))
+    ).isoformat()
+    with closing(get_connection()) as connection:
+        rows = connection.execute(
+            """
+            SELECT decision, category, COUNT(*)
+            FROM smart_cooldown_events
+            WHERE created_at >= ?
+            GROUP BY decision, category
+            """,
+            (cutoff,),
+        ).fetchall()
+
+    blocked = 0
+    allowed = 0
+    categories = {
+        "market_id": 0,
+        "event_group": 0,
+        "question": 0,
+        "opportunity": 0,
+        "other": 0,
+    }
+    for decision, category, count in rows:
+        count = int(count or 0)
+        if str(decision) == "blocked":
+            blocked += count
+            key = str(category or "other")
+            categories[key if key in categories else "other"] += count
+        elif str(decision) == "allowed_repeat":
+            allowed += count
+
+    repeat_checks = blocked + allowed
+    reduction_rate = (blocked / repeat_checks * 100.0) if repeat_checks else None
+    return {
+        "hours": int(hours),
+        "blocked": blocked,
+        "allowed_repeats": allowed,
+        "repeat_checks": repeat_checks,
+        "reduction_rate": reduction_rate,
+        "categories": categories,
+    }
+
+
+def get_recent_smart_cooldown_events(
+    hours: int = 24,
+    limit: int = 10,
+) -> list[dict[str, object]]:
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(hours=max(1, int(hours)))
+    ).isoformat()
+    with closing(get_connection()) as connection:
+        rows = connection.execute(
+            """
+            SELECT decision, category, reason, identity_type, signal_family,
+                   market_id, event_id, title, price, previous_price,
+                   price_move_percent, remaining_hours, created_at
+            FROM smart_cooldown_events
+            WHERE created_at >= ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (cutoff, max(1, int(limit))),
+        ).fetchall()
+
+    columns = (
+        "decision", "category", "reason", "identity_type", "signal_family",
+        "market_id", "event_id", "title", "price", "previous_price",
+        "price_move_percent", "remaining_hours", "created_at",
+    )
+    return [dict(zip(columns, row)) for row in rows]

@@ -40,6 +40,11 @@ from memory_engine import get_recent_memory_audit
 from alert_formatter import format_calibrated_alert
 from market_structure import enrich_market_structure
 from similarity_engine import analyze_similarity
+from cooldown_stats import (
+    format_cooldown_dashboard,
+    format_cooldown_summary,
+    get_cooldown_dashboard,
+)
 from calibration_engine import (
     calibrate_signal,
     get_calibration_report,
@@ -76,7 +81,8 @@ keyboard = ReplyKeyboardMarkup(
     [
         ["🔍 Сканировать", "⭐ Лучшая сделка"],
         ["📊 ТОП-5", "📈 Статистика"],
-        ["🧠 Проверки AI", "⚙️ Качество сигналов"],
+        ["🧠 Проверки AI", "🛡 Cooldown"],
+        ["⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
         ["ℹ Помощь"],
@@ -411,6 +417,11 @@ async def stats_action(
             get_subscribers_count
         )
         ai_stats = await asyncio.to_thread(get_ai_stats)
+        cooldown_dashboard = await asyncio.to_thread(
+            get_cooldown_dashboard,
+            24,
+            0,
+        )
 
     except Exception as error:
         logger.exception(
@@ -499,8 +510,33 @@ async def stats_action(
         + f"PUMP: {ai_stats['memory_24h']['pump_successful']}/"
         f"{ai_stats['memory_24h']['pump_total']} сильных\n"
         f"DIP: {ai_stats['memory_24h']['dip_successful']}/"
-        f"{ai_stats['memory_24h']['dip_total']} сильных"
+        f"{ai_stats['memory_24h']['dip_total']} сильных\n\n"
+        + format_cooldown_summary(cooldown_dashboard["stats"], compact=True)
     )
+
+
+# ---------------- SMART COOLDOWN ANALYTICS ----------------
+
+async def cooldown_stats_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+
+    await update.message.reply_text("🛡 Загружаю статистику Smart Cooldown...")
+    try:
+        dashboard = await asyncio.to_thread(
+            get_cooldown_dashboard,
+            24,
+            10,
+        )
+    except Exception as error:
+        logger.exception("Ошибка статистики Smart Cooldown")
+        await update.message.reply_text(f"❌ Ошибка:\n{error}")
+        return
+
+    await update.message.reply_text(format_cooldown_dashboard(dashboard))
 
 
 # ---------------- AI MEMORY AUDIT ----------------
@@ -1270,6 +1306,9 @@ async def handle_buttons(
     elif text == "🧠 Проверки AI":
         await memory_audit_action(update, context)
 
+    elif text == "🛡 Cooldown":
+        await cooldown_stats_action(update, context)
+
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
 
@@ -1341,6 +1380,7 @@ async def handle_buttons(
             "📊 ТОП-5 — пять лучших рынков\n"
             "📈 Статистика — сводка\n"
             "🧠 Проверки AI — последние результаты AI Memory\n"
+            "🛡 Cooldown — статистика и последние блокировки\n"
             "⚙️ Качество сигналов — фильтр ALL/GOOD/PREMIUM\n"
             "⭐ Мои события — избранные рынки и заметки\n"
             "🔔 Включить уведомления — подписаться\n"
@@ -1418,6 +1458,13 @@ def main() -> None:
         CommandHandler(
             "memory_debug",
             memory_audit_action,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "cooldown",
+            cooldown_stats_action,
         )
     )
 

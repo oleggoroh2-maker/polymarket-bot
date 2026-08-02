@@ -7,7 +7,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import config
-from database import get_smart_cooldown_records, save_smart_cooldown_records
+from database import (
+    get_smart_cooldown_records,
+    record_smart_cooldown_event,
+    save_smart_cooldown_records,
+)
 from market_group_engine import get_market_group_key
 
 
@@ -133,6 +137,43 @@ def _price_move_percent(current: float, previous: float) -> float | None:
     return ((current - previous) / previous) * 100.0
 
 
+def _analytics_category(family: str, identity_type: str) -> str:
+    if family == "OPPORTUNITY":
+        return "opportunity"
+    if identity_type in {"event_id", "event_slug", "group_key"}:
+        return "event_group"
+    if identity_type == "question_hash":
+        return "question"
+    if identity_type in {"market_id", "market_slug"}:
+        return "market_id"
+    return "other"
+
+
+def _record_decision(
+    alert: dict[str, Any],
+    decision: CooldownDecision,
+    family: str,
+) -> None:
+    """Analytics must never interrupt alert delivery."""
+    try:
+        record_smart_cooldown_event(
+            decision="blocked" if decision.blocked else "allowed_repeat",
+            category=_analytics_category(family, decision.identity_type),
+            reason=decision.reason,
+            identity_type=decision.identity_type,
+            signal_family=family,
+            market_id=_text(alert.get("id")),
+            event_id=_text(alert.get("event_id") or alert.get("eventId")),
+            title=_text(alert.get("title") or alert.get("question")),
+            price=_current_price(alert),
+            previous_price=decision.previous_price,
+            price_move_percent=decision.price_move_percent,
+            remaining_hours=decision.remaining_hours,
+        )
+    except Exception:
+        return
+
+
 def check_smart_cooldown(alert: dict[str, Any]) -> CooldownDecision:
     """Return whether an alert should be suppressed.
 
@@ -173,7 +214,7 @@ def check_smart_cooldown(alert: dict[str, Any]) -> CooldownDecision:
     move = _price_move_percent(current_price, previous_price)
 
     if move is not None and abs(move) >= SMART_COOLDOWN_PRICE_MOVE_PERCENT:
-        return CooldownDecision(
+        decision = CooldownDecision(
             blocked=False,
             reason="significant_price_move",
             identity_type=str(record.get("identity_type") or ""),
@@ -181,10 +222,12 @@ def check_smart_cooldown(alert: dict[str, Any]) -> CooldownDecision:
             price_move_percent=move,
             previous_price=previous_price,
         )
+        _record_decision(alert, decision, family)
+        return decision
 
     elapsed = (now - created_at).total_seconds() / 3600.0
     remaining = max(0.0, SMART_COOLDOWN_HOURS - elapsed)
-    return CooldownDecision(
+    decision = CooldownDecision(
         blocked=True,
         reason="cooldown_active",
         identity_type=str(record.get("identity_type") or ""),
@@ -193,6 +236,8 @@ def check_smart_cooldown(alert: dict[str, Any]) -> CooldownDecision:
         price_move_percent=move,
         previous_price=previous_price or None,
     )
+    _record_decision(alert, decision, family)
+    return decision
 
 
 def register_smart_cooldown(alert: dict[str, Any]) -> None:
