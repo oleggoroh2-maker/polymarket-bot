@@ -79,6 +79,29 @@ def init_db() -> None:
 
         cursor.execute(
             """
+            CREATE TABLE IF NOT EXISTS smart_cooldowns (
+                identity_type TEXT NOT NULL,
+                identity_key TEXT NOT NULL,
+                signal_family TEXT NOT NULL,
+                market_id TEXT,
+                event_id TEXT,
+                price REAL NOT NULL DEFAULT 0,
+                title TEXT,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (identity_type, identity_key, signal_family)
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_smart_cooldowns_time
+            ON smart_cooldowns (created_at)
+            """
+        )
+
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS subscribers (
                 chat_id INTEGER PRIMARY KEY,
                 username TEXT,
@@ -419,6 +442,13 @@ def cleanup_alerts(days: int = 30) -> None:
         connection.execute(
             """
             DELETE FROM market_group_alerts
+            WHERE created_at < ?
+            """,
+            (border,),
+        )
+        connection.execute(
+            """
+            DELETE FROM smart_cooldowns
             WHERE created_at < ?
             """,
             (border,),
@@ -908,5 +938,83 @@ def save_group_alert(
                 created_at = excluded.created_at
             """,
             (str(group_key), str(alert_family), str(market_id), now),
+        )
+        connection.commit()
+
+
+def get_smart_cooldown_records(
+    identities: list[tuple[str, str]],
+    signal_family: str,
+) -> list[dict[str, object]]:
+    if not identities:
+        return []
+
+    clauses = " OR ".join(
+        "(identity_type = ? AND identity_key = ?)" for _ in identities
+    )
+    parameters: list[object] = [str(signal_family)]
+    for identity_type, identity_key in identities:
+        parameters.extend((str(identity_type), str(identity_key)))
+
+    query = f"""
+        SELECT identity_type, identity_key, signal_family, market_id,
+               event_id, price, title, created_at
+        FROM smart_cooldowns
+        WHERE signal_family = ?
+          AND ({clauses})
+    """
+
+    with closing(get_connection()) as connection:
+        rows = connection.execute(query, parameters).fetchall()
+
+    columns = (
+        "identity_type", "identity_key", "signal_family", "market_id",
+        "event_id", "price", "title", "created_at",
+    )
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def save_smart_cooldown_records(
+    *,
+    identities: list[tuple[str, str]],
+    signal_family: str,
+    market_id: str,
+    event_id: str,
+    price: float,
+    title: str,
+) -> None:
+    if not identities:
+        return
+
+    created_at = datetime.now(timezone.utc).isoformat()
+    rows = [
+        (
+            str(identity_type),
+            str(identity_key),
+            str(signal_family),
+            str(market_id),
+            str(event_id),
+            float(price or 0.0),
+            str(title),
+            created_at,
+        )
+        for identity_type, identity_key in identities
+    ]
+
+    with closing(get_connection()) as connection:
+        connection.executemany(
+            """
+            INSERT INTO smart_cooldowns (
+                identity_type, identity_key, signal_family, market_id,
+                event_id, price, title, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(identity_type, identity_key, signal_family) DO UPDATE SET
+                market_id = excluded.market_id,
+                event_id = excluded.event_id,
+                price = excluded.price,
+                title = excluded.title,
+                created_at = excluded.created_at
+            """,
+            rows,
         )
         connection.commit()

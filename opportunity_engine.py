@@ -10,12 +10,8 @@ from market_group_engine import (
     select_group_representatives,
 )
 from alert_formatter import format_calibrated_alert
-from database import (
-    alert_on_cooldown,
-    group_alert_on_cooldown,
-    save_alert,
-    save_group_alert,
-)
+from database import save_alert, save_group_alert
+from smart_cooldown import check_smart_cooldown, register_smart_cooldown
 
 
 AUTO_OPPORTUNITY_ALERTS = getattr(config, "AUTO_OPPORTUNITY_ALERTS", True)
@@ -146,13 +142,6 @@ def check_opportunities(
             continue
         if not is_opportunity(signal):
             continue
-        if alert_on_cooldown(
-            market_id,
-            "AI_OPPORTUNITY",
-            OPPORTUNITY_COOLDOWN_HOURS,
-        ):
-            continue
-
         opportunity_score = calculate_opportunity_score(signal)
         prepared = {
             **signal,
@@ -203,15 +192,13 @@ def check_opportunities(
     for alert in selected:
         market_id = str(alert["id"])
         group_key = get_market_group_key(alert)
-        if group_alert_on_cooldown(
-            group_key,
-            "ANY_ALERT",
-            group_cooldown_hours,
-        ):
+        cooldown = check_smart_cooldown(alert)
+        if cooldown.blocked:
             continue
 
         save_alert(market_id, "AI_OPPORTUNITY")
         save_group_alert(group_key, "ANY_ALERT", market_id)
+        register_smart_cooldown(alert)
         try:
             alert["ai_signal_id"] = record_alert(alert)
         except Exception:

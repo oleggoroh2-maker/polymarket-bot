@@ -10,12 +10,8 @@ from market_group_engine import (
     select_group_representatives,
 )
 from alert_formatter import format_calibrated_alert
-from database import (
-    alert_on_cooldown,
-    group_alert_on_cooldown,
-    save_alert,
-    save_group_alert,
-)
+from database import save_alert, save_group_alert
+from smart_cooldown import check_smart_cooldown, register_smart_cooldown
 
 
 # ---------------- SETTINGS ----------------
@@ -376,12 +372,6 @@ def check_signals(
 
         for alert_data in detect_alerts(signal):
             alert_type = str(alert_data["alert_type"])
-            if alert_on_cooldown(
-                market_id,
-                alert_type,
-                ALERT_COOLDOWN_HOURS,
-            ):
-                continue
 
             prepared_alert = enrich_signal(
                 {
@@ -407,15 +397,13 @@ def check_signals(
         alert_type = str(prepared_alert.get("alert_type") or "")
         group_key = get_market_group_key(prepared_alert)
 
-        if group_alert_on_cooldown(
-            group_key,
-            "ANY_ALERT",
-            group_cooldown_hours,
-        ):
+        cooldown = check_smart_cooldown(prepared_alert)
+        if cooldown.blocked:
             continue
 
         save_alert(market_id, alert_type)
         save_group_alert(group_key, "ANY_ALERT", market_id)
+        register_smart_cooldown(prepared_alert)
 
         try:
             prepared_alert["ai_signal_id"] = record_alert(prepared_alert)
