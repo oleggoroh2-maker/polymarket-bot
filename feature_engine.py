@@ -163,3 +163,303 @@ def calculate_rule_assessment(signal: dict[str, Any]) -> dict[str, Any]:
 
 def vector_from_features(features: dict[str, float]) -> list[float]:
     return [_number(features.get(name)) for name in FEATURE_NAMES]
+
+
+# ---------------- FEATURE IMPORTANCE / AI INSIGHTS ----------------
+
+import json
+import sqlite3
+from contextlib import closing
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class _Bucket:
+    label: str
+    low: float | None = None
+    high: float | None = None
+
+    def contains(self, value: float) -> bool:
+        if self.low is not None and value < self.low:
+            return False
+        if self.high is not None and value >= self.high:
+            return False
+        return True
+
+
+_NUMERIC_BUCKETS: dict[str, tuple[str, tuple[_Bucket, ...]]] = {
+    "score": ("Score", (
+        _Bucket("<40", None, 40), _Bucket("40–59", 40, 60),
+        _Bucket("60–74", 60, 75), _Bucket("75–84", 75, 85),
+        _Bucket("85+", 85, None),
+    )),
+    "ai_quality": ("AI Quality", (
+        _Bucket("<40", None, 40), _Bucket("40–59", 40, 60),
+        _Bucket("60–74", 60, 75), _Bucket("75–84", 75, 85),
+        _Bucket("85+", 85, None),
+    )),
+    "ai_risk": ("AI Risk", (
+        _Bucket("0–19", None, 20), _Bucket("20–39", 20, 40),
+        _Bucket("40–59", 40, 60), _Bucket("60+", 60, None),
+    )),
+    "ml": ("ML", (
+        _Bucket("<10%", None, 10), _Bucket("10–24%", 10, 25),
+        _Bucket("25–39%", 25, 40), _Bucket("40–59%", 40, 60),
+        _Bucket("60%+", 60, None),
+    )),
+    "liquidity": ("Ликвидность", (
+        _Bucket("<$10k", None, 10_000), _Bucket("$10–50k", 10_000, 50_000),
+        _Bucket("$50–250k", 50_000, 250_000),
+        _Bucket("$250k–1M", 250_000, 1_000_000),
+        _Bucket("$1M+", 1_000_000, None),
+    )),
+    "price_change": ("Движение цены", (
+        _Bucket("<5%", None, 5), _Bucket("5–14%", 5, 15),
+        _Bucket("15–29%", 15, 30), _Bucket("30–59%", 30, 60),
+        _Bucket("60%+", 60, None),
+    )),
+    "volume_change": ("Изм. объёма", (
+        _Bucket("<-20%", None, -20), _Bucket("-20–0%", -20, 0),
+        _Bucket("0–20%", 0, 20), _Bucket("20–80%", 20, 80),
+        _Bucket("80%+", 80, None),
+    )),
+    "liquidity_change": ("Изм. ликвидности", (
+        _Bucket("<-10%", None, -10), _Bucket("-10–0%", -10, 0),
+        _Bucket("0–10%", 0, 10), _Bucket("10–30%", 10, 30),
+        _Bucket("30%+", 30, None),
+    )),
+    "similarity": ("Similarity", (
+        _Bucket("<60%", None, 60), _Bucket("60–69%", 60, 70),
+        _Bucket("70–79%", 70, 80), _Bucket("80–89%", 80, 90),
+        _Bucket("90%+", 90, None),
+    )),
+}
+
+
+def _json_object(raw: Any) -> dict[str, Any]:
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _probability_percent_value(value: Any) -> float | None:
+    if value is None:
+        return None
+    number = _number(value, float("nan"))
+    if not math.isfinite(number):
+        return None
+    if 0 <= number <= 1:
+        number *= 100
+    return _clip(number, 0, 100)
+
+
+def _insight_rows(checkpoint_minutes: int, max_rows: int) -> list[dict[str, Any]]:
+    # Local import prevents a circular dependency during ai_engine startup.
+    from database import get_connection
+
+    try:
+        with closing(get_connection()) as connection:
+            rows = connection.execute(
+                """
+                SELECT s.base_score, s.ai_quality, s.ai_risk, s.ml_probability,
+                       s.liquidity, s.category, s.alert_type, s.metadata_json,
+                       o.status, o.directional_return_percent
+                FROM ai_signals s
+                JOIN signal_outcomes o ON o.signal_id = s.signal_id
+                WHERE o.checkpoint_minutes = ? AND o.status IS NOT NULL
+                ORDER BY o.measured_at DESC
+                LIMIT ?
+                """,
+                (int(checkpoint_minutes), int(max_rows)),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        metadata = _json_object(row[7])
+        status = str(row[8] or "").upper()
+        result.append({
+            "score": _number(row[0]),
+            "ai_quality": _number(row[1]),
+            "ai_risk": _number(row[2]),
+            "ml": _probability_percent_value(row[3]),
+            "liquidity": max(0.0, _number(row[4])),
+            "category": str(row[5] or "OTHER").upper(),
+            "direction": "DIP" if "DIP" in str(row[6] or "").upper() else "PUMP",
+            "price_change": abs(_number(metadata.get("price_change_percent"))),
+            "volume_change": (
+                None if metadata.get("volume_change_percent") is None
+                else _number(metadata.get("volume_change_percent"))
+            ),
+            "liquidity_change": (
+                None if metadata.get("liquidity_change_percent") is None
+                else _number(metadata.get("liquidity_change_percent"))
+            ),
+            "similarity": (
+                None if metadata.get("similarity_average") is None
+                else _number(metadata.get("similarity_average"))
+            ),
+            "status": status,
+            "strong": status == "SUCCESS",
+            "continued": status in {"SUCCESS", "PARTIAL"},
+            "return": _number(row[9]),
+        })
+    return result
+
+
+def _bucket_statistics(
+    rows: list[dict[str, Any]],
+    key: str,
+    buckets: tuple[_Bucket, ...],
+    min_samples: int,
+) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for bucket in buckets:
+        selected = [
+            row for row in rows
+            if row.get(key) is not None and bucket.contains(float(row[key]))
+        ]
+        count = len(selected)
+        if count < min_samples:
+            continue
+        output.append({
+            "label": bucket.label,
+            "samples": count,
+            "strong_rate": sum(row["strong"] for row in selected) / count * 100,
+            "continuation_rate": sum(row["continued"] for row in selected) / count * 100,
+            "average_return": sum(row["return"] for row in selected) / count,
+        })
+    return output
+
+
+def _importance_from_buckets(stats: list[dict[str, Any]], total_rows: int) -> float:
+    if len(stats) < 2 or total_rows <= 0:
+        return 0.0
+    rates = [item["continuation_rate"] for item in stats]
+    coverage = min(1.0, sum(item["samples"] for item in stats) / total_rows)
+    reliability = min(1.0, sum(item["samples"] for item in stats) / 300.0)
+    # A transparent 0..100 diagnostic score, not a causal importance measure.
+    return round((max(rates) - min(rates)) * coverage * reliability, 1)
+
+
+def _category_statistics(
+    rows: list[dict[str, Any]],
+    min_samples: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row.get("category") or "OTHER"), []).append(row)
+    output: list[dict[str, Any]] = []
+    for category, selected in grouped.items():
+        count = len(selected)
+        if count < min_samples:
+            continue
+        output.append({
+            "label": category,
+            "samples": count,
+            "strong_rate": sum(row["strong"] for row in selected) / count * 100,
+            "continuation_rate": sum(row["continued"] for row in selected) / count * 100,
+            "average_return": sum(row["return"] for row in selected) / count,
+        })
+    return sorted(output, key=lambda item: item["continuation_rate"], reverse=True)
+
+
+def get_feature_importance_report(
+    checkpoint_minutes: int = 1440,
+    max_rows: int = 5000,
+    min_bucket_samples: int = 20,
+) -> dict[str, Any]:
+    """Analyze which stored signal factors separate outcomes most clearly.
+
+    The returned importance score is descriptive. It measures historical
+    separation between buckets and must not be interpreted as causality.
+    """
+    rows = _insight_rows(checkpoint_minutes, max_rows)
+    total = len(rows)
+    if not rows:
+        return {"total": 0, "factors": [], "categories": []}
+
+    factors: list[dict[str, Any]] = []
+    for key, (label, buckets) in _NUMERIC_BUCKETS.items():
+        stats = _bucket_statistics(rows, key, buckets, min_bucket_samples)
+        if len(stats) < 2:
+            continue
+        best = max(stats, key=lambda item: (item["continuation_rate"], item["average_return"]))
+        worst = min(stats, key=lambda item: (item["continuation_rate"], item["average_return"]))
+        factors.append({
+            "key": key,
+            "label": label,
+            "importance": _importance_from_buckets(stats, total),
+            "best": best,
+            "worst": worst,
+            "buckets": stats,
+        })
+    factors.sort(key=lambda item: item["importance"], reverse=True)
+
+    categories = _category_statistics(rows, min_bucket_samples)
+    return {
+        "total": total,
+        "checkpoint_minutes": checkpoint_minutes,
+        "strong_rate": sum(row["strong"] for row in rows) / total * 100,
+        "continuation_rate": sum(row["continued"] for row in rows) / total * 100,
+        "average_return": sum(row["return"] for row in rows) / total,
+        "factors": factors,
+        "categories": categories,
+        "similarity_samples": sum(row.get("similarity") is not None for row in rows),
+    }
+
+
+def format_feature_importance_report(report: dict[str, Any]) -> str:
+    total = int(report.get("total") or 0)
+    if total == 0:
+        return "🧠 AI Insights\n\nПока нет проверенных сигналов для анализа."
+
+    lines = [
+        "🧠 AI Insights",
+        "",
+        f"Проверено сигналов: {total}",
+        f"Сильное продолжение: {float(report['strong_rate']):.1f}%",
+        f"Любое продолжение: {float(report['continuation_rate']):.1f}%",
+        f"Средний результат: {float(report['average_return']):+.1f}%",
+        "",
+        "📊 Влияние факторов",
+    ]
+
+    factors = list(report.get("factors") or [])
+    if not factors:
+        lines.append("Недостаточно данных по диапазонам.")
+    else:
+        for index, factor in enumerate(factors[:7], start=1):
+            best = factor["best"]
+            lines.append(
+                f"{index}. {factor['label']} — {factor['importance']:.1f}/100\n"
+                f"   Лучший диапазон: {best['label']} · "
+                f"{best['continuation_rate']:.1f}% продолжений "
+                f"(n={best['samples']})"
+            )
+
+    similarity_samples = int(report.get("similarity_samples") or 0)
+    if similarity_samples < 50:
+        lines.extend([
+            "",
+            f"ℹ️ Similarity сохранён у {similarity_samples} сигналов.",
+            "Его оценка станет надёжнее после накопления новых проверок.",
+        ])
+
+    categories = list(report.get("categories") or [])
+    if categories:
+        lines.extend(["", "🏷 Категории"])
+        for item in categories[:5]:
+            lines.append(
+                f"• {item['label']}: {item['continuation_rate']:.1f}% "
+                f"(n={item['samples']})"
+            )
+
+    lines.extend([
+        "",
+        "⚠️ Это историческая связь, а не гарантия и не причинный анализ.",
+    ])
+    return "\n".join(lines)

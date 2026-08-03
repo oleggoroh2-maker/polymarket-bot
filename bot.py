@@ -45,6 +45,10 @@ from cooldown_stats import (
     format_cooldown_summary,
     get_cooldown_dashboard,
 )
+from feature_engine import (
+    format_feature_importance_report,
+    get_feature_importance_report,
+)
 from calibration_engine import (
     calibrate_signal,
     get_calibration_report,
@@ -82,7 +86,7 @@ keyboard = ReplyKeyboardMarkup(
         ["🔍 Сканировать", "⭐ Лучшая сделка"],
         ["📊 ТОП-5", "📈 Статистика"],
         ["🧠 Проверки AI", "🛡 Cooldown"],
-        ["⚙️ Качество сигналов"],
+        ["🧠 AI Insights", "⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
         ["ℹ Помощь"],
@@ -513,6 +517,31 @@ async def stats_action(
         f"{ai_stats['memory_24h']['dip_total']} сильных\n\n"
         + format_cooldown_summary(cooldown_dashboard["stats"], compact=True)
     )
+
+
+# ---------------- FEATURE IMPORTANCE / AI INSIGHTS ----------------
+
+async def feature_insights_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+
+    await update.message.reply_text("🧠 Анализирую эффективность факторов...")
+    try:
+        report = await asyncio.to_thread(
+            get_feature_importance_report,
+            int(getattr(config, "FEATURE_IMPORTANCE_CHECKPOINT_MINUTES", 1440)),
+            int(getattr(config, "FEATURE_IMPORTANCE_MAX_ROWS", 5000)),
+            int(getattr(config, "FEATURE_IMPORTANCE_MIN_BUCKET_SAMPLES", 20)),
+        )
+    except Exception as error:
+        logger.exception("Ошибка AI Insights")
+        await update.message.reply_text(f"❌ Ошибка:\n{error}")
+        return
+
+    await update.message.reply_text(format_feature_importance_report(report))
 
 
 # ---------------- SMART COOLDOWN ANALYTICS ----------------
@@ -1309,6 +1338,9 @@ async def handle_buttons(
     elif text == "🛡 Cooldown":
         await cooldown_stats_action(update, context)
 
+    elif text == "🧠 AI Insights":
+        await feature_insights_action(update, context)
+
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
 
@@ -1381,6 +1413,7 @@ async def handle_buttons(
             "📈 Статистика — сводка\n"
             "🧠 Проверки AI — последние результаты AI Memory\n"
             "🛡 Cooldown — статистика и последние блокировки\n"
+            "🧠 AI Insights — эффективность факторов и категорий\n"
             "⚙️ Качество сигналов — фильтр ALL/GOOD/PREMIUM\n"
             "⭐ Мои события — избранные рынки и заметки\n"
             "🔔 Включить уведомления — подписаться\n"
@@ -1465,6 +1498,13 @@ def main() -> None:
         CommandHandler(
             "cooldown",
             cooldown_stats_action,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "insights",
+            feature_insights_action,
         )
     )
 

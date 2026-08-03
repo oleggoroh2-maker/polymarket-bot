@@ -593,6 +593,13 @@ def record_alert(alert: dict[str, Any]) -> str:
         "market_group_title": alert.get("market_group_title"),
         "market_group_size": alert.get("market_group_size"),
         "market_group_suppressed": alert.get("market_group_suppressed"),
+        "similarity_samples": alert.get("similarity_samples"),
+        "similarity_average": alert.get("similarity_average"),
+        "similarity_strong_rate": alert.get("similarity_strong_rate"),
+        "similarity_continuation_rate": alert.get("similarity_continuation_rate"),
+        "similarity_average_return": alert.get("similarity_average_return"),
+        "calibration_confidence": alert.get("calibration_confidence"),
+        "calibration_tier": alert.get("calibration_tier"),
     }
 
     with closing(get_connection()) as connection:
