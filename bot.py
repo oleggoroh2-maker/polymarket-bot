@@ -49,6 +49,10 @@ from feature_engine import (
     format_feature_importance_report,
     get_feature_importance_report,
 )
+from adaptive_ai import (
+    format_weight_proposal,
+    generate_weight_proposal,
+)
 from calibration_engine import (
     calibrate_signal,
     get_calibration_report,
@@ -86,7 +90,8 @@ keyboard = ReplyKeyboardMarkup(
         ["🔍 Сканировать", "⭐ Лучшая сделка"],
         ["📊 ТОП-5", "📈 Статистика"],
         ["🧠 Проверки AI", "🛡 Cooldown"],
-        ["🧠 AI Insights", "⚙️ Качество сигналов"],
+        ["🧠 AI Insights", "🧠 Adaptive AI"],
+        ["⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
         ["ℹ Помощь"],
@@ -542,6 +547,26 @@ async def feature_insights_action(
         return
 
     await update.message.reply_text(format_feature_importance_report(report))
+
+
+# ---------------- ADAPTIVE AI / SHADOW WEIGHTS ----------------
+
+async def adaptive_ai_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+
+    await update.message.reply_text("🧠 Рассчитываю теневые рекомендации весов...")
+    try:
+        proposal = await asyncio.to_thread(generate_weight_proposal)
+    except Exception as error:
+        logger.exception("Ошибка Adaptive AI")
+        await update.message.reply_text(f"❌ Ошибка:\n{error}")
+        return
+
+    await update.message.reply_text(format_weight_proposal(proposal))
 
 
 # ---------------- SMART COOLDOWN ANALYTICS ----------------
@@ -1341,6 +1366,9 @@ async def handle_buttons(
     elif text == "🧠 AI Insights":
         await feature_insights_action(update, context)
 
+    elif text == "🧠 Adaptive AI":
+        await adaptive_ai_action(update, context)
+
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
 
@@ -1414,6 +1442,7 @@ async def handle_buttons(
             "🧠 Проверки AI — последние результаты AI Memory\n"
             "🛡 Cooldown — статистика и последние блокировки\n"
             "🧠 AI Insights — эффективность факторов и категорий\n"
+            "🧠 Adaptive AI — теневые рекомендации весов\n"
             "⚙️ Качество сигналов — фильтр ALL/GOOD/PREMIUM\n"
             "⭐ Мои события — избранные рынки и заметки\n"
             "🔔 Включить уведомления — подписаться\n"
@@ -1505,6 +1534,13 @@ def main() -> None:
         CommandHandler(
             "insights",
             feature_insights_action,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "weights",
+            adaptive_ai_action,
         )
     )
 
