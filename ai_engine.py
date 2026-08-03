@@ -14,6 +14,7 @@ from database import get_connection
 from feature_engine import calculate_features, calculate_rule_assessment
 from ml_engine import load_model, predict_probability, train_model
 from memory_engine import classify_outcome, get_memory_stats
+from ai_simulator import record_simulator_signal
 
 logger = logging.getLogger(__name__)
 
@@ -624,6 +625,11 @@ def record_alert(alert: dict[str, Any]) -> str:
             ),
         )
         connection.commit()
+
+    try:
+        record_simulator_signal(signal_id, alert, assessment)
+    except Exception:
+        logger.exception("AI Simulator failed to record signal %s", signal_id)
 
     return signal_id
 

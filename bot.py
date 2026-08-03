@@ -53,6 +53,10 @@ from adaptive_ai import (
     format_weight_proposal,
     generate_weight_proposal,
 )
+from ai_simulator import (
+    format_simulator_report,
+    get_simulator_report,
+)
 from calibration_engine import (
     calibrate_signal,
     get_calibration_report,
@@ -91,6 +95,7 @@ keyboard = ReplyKeyboardMarkup(
         ["📊 ТОП-5", "📈 Статистика"],
         ["🧠 Проверки AI", "🛡 Cooldown"],
         ["🧠 AI Insights", "🧠 Adaptive AI"],
+        ["🧪 AI Simulator"],
         ["⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
@@ -567,6 +572,26 @@ async def adaptive_ai_action(
         return
 
     await update.message.reply_text(format_weight_proposal(proposal))
+
+
+# ---------------- AI SIMULATOR / SHADOW BACKTEST ----------------
+
+async def ai_simulator_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+
+    await update.message.reply_text("🧪 Сравниваю текущие и теневые веса...")
+    try:
+        report = await asyncio.to_thread(get_simulator_report)
+    except Exception as error:
+        logger.exception("Ошибка AI Simulator")
+        await update.message.reply_text(f"❌ Ошибка:\n{error}")
+        return
+
+    await update.message.reply_text(format_simulator_report(report))
 
 
 # ---------------- SMART COOLDOWN ANALYTICS ----------------
@@ -1369,6 +1394,9 @@ async def handle_buttons(
     elif text == "🧠 Adaptive AI":
         await adaptive_ai_action(update, context)
 
+    elif text == "🧪 AI Simulator":
+        await ai_simulator_action(update, context)
+
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
 
@@ -1541,6 +1569,13 @@ def main() -> None:
         CommandHandler(
             "weights",
             adaptive_ai_action,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "simulator",
+            ai_simulator_action,
         )
     )
 
