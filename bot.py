@@ -57,6 +57,10 @@ from ai_simulator import (
     format_simulator_report,
     get_simulator_report,
 )
+from confidence_engine import (
+    format_confidence_report,
+    get_confidence_report,
+)
 from calibration_engine import (
     calibrate_signal,
     get_calibration_report,
@@ -95,7 +99,7 @@ keyboard = ReplyKeyboardMarkup(
         ["📊 ТОП-5", "📈 Статистика"],
         ["🧠 Проверки AI", "🛡 Cooldown"],
         ["🧠 AI Insights", "🧠 Adaptive AI"],
-        ["🧪 AI Simulator"],
+        ["🧪 AI Simulator", "🎯 Confidence"],
         ["⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
@@ -592,6 +596,26 @@ async def ai_simulator_action(
         return
 
     await update.message.reply_text(format_simulator_report(report))
+
+
+# ---------------- SIGNAL CONFIDENCE / SHADOW MODE ----------------
+
+async def confidence_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+
+    await update.message.reply_text("🎯 Анализирую Confidence по проверенным сигналам...")
+    try:
+        report = await asyncio.to_thread(get_confidence_report)
+    except Exception as error:
+        logger.exception("Ошибка Signal Confidence")
+        await update.message.reply_text(f"❌ Ошибка:\n{error}")
+        return
+
+    await update.message.reply_text(format_confidence_report(report))
 
 
 # ---------------- SMART COOLDOWN ANALYTICS ----------------
@@ -1397,6 +1421,9 @@ async def handle_buttons(
     elif text == "🧪 AI Simulator":
         await ai_simulator_action(update, context)
 
+    elif text == "🎯 Confidence":
+        await confidence_action(update, context)
+
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
 
@@ -1470,6 +1497,7 @@ async def handle_buttons(
             "🧠 Проверки AI — последние результаты AI Memory\n"
             "🛡 Cooldown — статистика и последние блокировки\n"
             "🧠 AI Insights — эффективность факторов и категорий\n"
+            "🎯 Confidence — теневой итоговый рейтинг сигналов\n"
             "🧠 Adaptive AI — теневые рекомендации весов\n"
             "⚙️ Качество сигналов — фильтр ALL/GOOD/PREMIUM\n"
             "⭐ Мои события — избранные рынки и заметки\n"
@@ -1576,6 +1604,13 @@ def main() -> None:
         CommandHandler(
             "simulator",
             ai_simulator_action,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "confidence",
+            confidence_action,
         )
     )
 

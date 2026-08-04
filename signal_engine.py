@@ -12,6 +12,7 @@ from market_group_engine import (
 from alert_formatter import format_calibrated_alert
 from database import save_alert, save_group_alert
 from smart_cooldown import check_smart_cooldown, register_smart_cooldown
+from confidence_engine import enrich_with_confidence
 
 
 # ---------------- SETTINGS ----------------
@@ -381,6 +382,7 @@ def check_signals(
             )
             prepared_alert.update(analyze_similarity(prepared_alert))
             prepared_alert.update(calibrate_signal(prepared_alert))
+            prepared_alert = enrich_with_confidence(prepared_alert)
             candidates.append(prepared_alert)
 
     # Markets belonging to one Polymarket event are treated as one family.

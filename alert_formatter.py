@@ -173,6 +173,9 @@ def format_calibrated_alert(
     similarity_return = _optional_num(alert.get("similarity_average_return"))
     similarity_best_title = alert.get("similarity_best_title")
     similarity_best_return = _optional_num(alert.get("similarity_best_return"))
+    signal_confidence = _optional_num(alert.get("signal_confidence"))
+    confidence_tier = escape(str(alert.get("confidence_label") or alert.get("confidence_tier") or ""))
+    confidence_components = alert.get("confidence_components") or []
     timeframe = escape(str(alert.get("timeframe") or "—"))
     momentum = escape(str(alert.get("momentum") or "—"))
     title = escape(_short_title(alert.get("title")))
@@ -190,6 +193,9 @@ def format_calibrated_alert(
         price_line += f"  (<b>{_signed(change)}</b>)"
     header.append(price_line)
     header.append(f"⏱ {timeframe}  |  💧 {_money(liquidity)}")
+    if signal_confidence is not None:
+        suffix = f" · {confidence_tier}" if confidence_tier else ""
+        header.append(f"🎯 Confidence: <b>{signal_confidence:.0f}/100</b>{suffix}")
     header.append("")
 
     if change is not None:
@@ -224,6 +230,28 @@ def format_calibrated_alert(
         f"AI Quality: {quality}/100",
         f"AI Risk: {risk}/100 ({_risk_label(risk)})",
         f"ML: {ml * 100:.1f}%" if ml is not None else "ML: накопление данных",
+    ]
+
+    if signal_confidence is not None:
+        details.extend([
+            "",
+            "<b>🎯 SIGNAL CONFIDENCE</b>",
+            f"Confidence: {signal_confidence:.1f}/100",
+            f"Уровень: {confidence_tier or '—'}",
+            "Режим: Shadow — не влияет на отправку",
+        ])
+        for component in sorted(
+            (item for item in confidence_components if isinstance(item, dict)),
+            key=lambda item: abs(_num(item.get("points"))),
+            reverse=True,
+        )[:6]:
+            points = _num(component.get("points"))
+            icon = "🟢" if points > 0 else "🔴" if points < 0 else "⚪"
+            details.append(
+                f"{icon} {escape(str(component.get('label') or component.get('key') or 'Фактор'))}: {points:+.1f}"
+            )
+
+    details.extend([
         "",
         "<b>🎯 ПРОГНОЗ AI</b>",
         f"Направление: {direction}",
@@ -238,7 +266,7 @@ def format_calibrated_alert(
         "<b>🛡 БЕЗОПАСНОСТЬ</b>",
         f"AI Risk: {_risk_label(risk)} ({risk}/100)",
         f"Текущая ликвидность: {_money(liquidity)}",
-    ]
+    ])
 
     structure = _structure_lines(alert)
     if structure:

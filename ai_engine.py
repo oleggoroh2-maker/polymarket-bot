@@ -15,6 +15,7 @@ from feature_engine import calculate_features, calculate_rule_assessment
 from ml_engine import load_model, predict_probability, train_model
 from memory_engine import classify_outcome, get_memory_stats
 from ai_simulator import record_simulator_signal
+from confidence_engine import record_confidence_signal
 
 logger = logging.getLogger(__name__)
 
@@ -601,6 +602,9 @@ def record_alert(alert: dict[str, Any]) -> str:
         "similarity_average_return": alert.get("similarity_average_return"),
         "calibration_confidence": alert.get("calibration_confidence"),
         "calibration_tier": alert.get("calibration_tier"),
+        "signal_confidence": alert.get("signal_confidence"),
+        "confidence_tier": alert.get("confidence_tier"),
+        "confidence_components": alert.get("confidence_components"),
     }
 
     with closing(get_connection()) as connection:
@@ -630,6 +634,11 @@ def record_alert(alert: dict[str, Any]) -> str:
         record_simulator_signal(signal_id, alert, assessment)
     except Exception:
         logger.exception("AI Simulator failed to record signal %s", signal_id)
+
+    try:
+        record_confidence_signal(signal_id, alert)
+    except Exception:
+        logger.exception("Confidence Engine failed to record signal %s", signal_id)
 
     return signal_id
 

@@ -12,6 +12,7 @@ from market_group_engine import (
 from alert_formatter import format_calibrated_alert
 from database import save_alert, save_group_alert
 from smart_cooldown import check_smart_cooldown, register_smart_cooldown
+from confidence_engine import enrich_with_confidence
 
 
 AUTO_OPPORTUNITY_ALERTS = getattr(config, "AUTO_OPPORTUNITY_ALERTS", True)
@@ -172,6 +173,7 @@ def check_opportunities(
     for alert in candidates:
         alert.update(analyze_similarity(alert))
         alert.update(calibrate_signal(alert))
+        alert = enrich_with_confidence(alert)
         enriched_candidates.append(alert)
 
     grouped = select_group_representatives(enriched_candidates)
