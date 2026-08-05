@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import closing
+from statistics import median, pstdev
 from typing import Any
 
 import config
@@ -25,8 +26,48 @@ def classify_outcome(directional_return_percent: float) -> str:
     return "FAIL"
 
 
+def _trimmed_mean(values: list[float], trim_fraction: float = 0.05) -> float | None:
+    """Return a symmetric trimmed mean, or the ordinary mean for small samples."""
+    if not values:
+        return None
+    ordered = sorted(float(value) for value in values)
+    trim = int(len(ordered) * max(0.0, min(float(trim_fraction), 0.20)))
+    if trim > 0 and len(ordered) - 2 * trim >= 1:
+        ordered = ordered[trim:-trim]
+    return sum(ordered) / len(ordered)
+
+
+def _result_distribution(values: list[float]) -> dict[str, int]:
+    distribution = {
+        "gte_50": 0,
+        "20_to_50": 0,
+        "0_to_20": 0,
+        "zero": 0,
+        "minus_20_to_0": 0,
+        "minus_50_to_minus_20": 0,
+        "lt_minus_50": 0,
+    }
+    for value in values:
+        number = float(value)
+        if number >= 50:
+            distribution["gte_50"] += 1
+        elif number >= 20:
+            distribution["20_to_50"] += 1
+        elif number > 0:
+            distribution["0_to_20"] += 1
+        elif abs(number) < 1e-12:
+            distribution["zero"] += 1
+        elif number > -20:
+            distribution["minus_20_to_0"] += 1
+        elif number > -50:
+            distribution["minus_50_to_minus_20"] += 1
+        else:
+            distribution["lt_minus_50"] += 1
+    return distribution
+
+
 def get_memory_stats(checkpoint_minutes: int = 1440) -> dict[str, Any]:
-    """Return aggregate and direction-split statistics for a checkpoint."""
+    """Return aggregate, robust-return and direction-split checkpoint statistics."""
     with closing(get_connection()) as connection:
         row = connection.execute(
             """
@@ -48,7 +89,18 @@ def get_memory_stats(checkpoint_minutes: int = 1440) -> dict[str, Any]:
             """,
             (int(checkpoint_minutes),),
         ).fetchone()
+        return_rows = connection.execute(
+            """
+            SELECT o.directional_return_percent
+            FROM signal_outcomes o
+            WHERE o.checkpoint_minutes = ?
+              AND o.status IS NOT NULL
+              AND o.directional_return_percent IS NOT NULL
+            """,
+            (int(checkpoint_minutes),),
+        ).fetchall()
 
+    values = [float(item[0]) for item in return_rows]
     total = int(row[0] or 0) if row else 0
     successful = int(row[1] or 0) if row else 0
     partial = int(row[2] or 0) if row else 0
@@ -61,6 +113,11 @@ def get_memory_stats(checkpoint_minutes: int = 1440) -> dict[str, Any]:
     dip_successful = int(row[9] or 0) if row else 0
     continued = successful + partial
 
+    robust_median = median(values) if values else None
+    trimmed = _trimmed_mean(values, 0.05)
+    mean_absolute = (sum(abs(value) for value in values) / len(values)) if values else None
+    standard_deviation = pstdev(values) if len(values) >= 2 else (0.0 if values else None)
+
     return {
         "checkpoint_minutes": int(checkpoint_minutes),
         "total": total,
@@ -71,6 +128,11 @@ def get_memory_stats(checkpoint_minutes: int = 1440) -> dict[str, Any]:
         "success_rate": (successful / total * 100.0) if total else None,
         "continuation_rate": (continued / total * 100.0) if total else None,
         "average_directional_return": average if total else None,
+        "median_directional_return": robust_median,
+        "trimmed_mean_directional_return": trimmed,
+        "mean_absolute_directional_return": mean_absolute,
+        "directional_return_stddev": standard_deviation,
+        "result_distribution": _result_distribution(values),
         "pump_total": pump_total,
         "pump_successful": pump_successful,
         "dip_total": dip_total,

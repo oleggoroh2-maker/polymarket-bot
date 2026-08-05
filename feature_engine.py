@@ -7,7 +7,7 @@ The rule score is informative only; it does not block alerts.
 from __future__ import annotations
 
 import math
-from statistics import mean, pstdev
+from statistics import mean, median, pstdev
 from typing import Any, Optional
 
 FEATURE_NAMES = [
@@ -367,6 +367,35 @@ def _category_statistics(
     return sorted(output, key=lambda item: item["continuation_rate"], reverse=True)
 
 
+def _trimmed_mean_values(values: list[float], trim_fraction: float = 0.05) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(float(value) for value in values)
+    trim = int(len(ordered) * max(0.0, min(float(trim_fraction), 0.20)))
+    if trim > 0 and len(ordered) - 2 * trim >= 1:
+        ordered = ordered[trim:-trim]
+    return sum(ordered) / len(ordered)
+
+
+def _reliability(samples: int) -> dict[str, Any]:
+    count = max(0, int(samples))
+    if count >= 300:
+        stars, label = 5, "очень высокая"
+    elif count >= 150:
+        stars, label = 4, "высокая"
+    elif count >= 75:
+        stars, label = 3, "средняя"
+    elif count >= 30:
+        stars, label = 2, "низкая"
+    else:
+        stars, label = 1, "предварительная"
+    return {
+        "stars": stars,
+        "stars_text": "★" * stars + "☆" * (5 - stars),
+        "label": label,
+    }
+
+
 def get_feature_importance_report(
     checkpoint_minutes: int = 1440,
     max_rows: int = 5000,
@@ -393,9 +422,12 @@ def get_feature_importance_report(
             "key": key,
             "label": label,
             "importance": _importance_from_buckets(stats, total),
-            "best": best,
-            "worst": worst,
-            "buckets": stats,
+            "best": {**best, "reliability": _reliability(best["samples"])},
+            "worst": {**worst, "reliability": _reliability(worst["samples"])},
+            "buckets": [
+                {**item, "reliability": _reliability(item["samples"])}
+                for item in stats
+            ],
         })
     factors.sort(key=lambda item: item["importance"], reverse=True)
 
@@ -406,6 +438,10 @@ def get_feature_importance_report(
         "strong_rate": sum(row["strong"] for row in rows) / total * 100,
         "continuation_rate": sum(row["continued"] for row in rows) / total * 100,
         "average_return": sum(row["return"] for row in rows) / total,
+        "median_return": median([row["return"] for row in rows]),
+        "trimmed_mean_return": _trimmed_mean_values([row["return"] for row in rows], 0.05),
+        "mean_absolute_return": sum(abs(row["return"]) for row in rows) / total,
+        "return_stddev": pstdev([row["return"] for row in rows]) if total >= 2 else 0.0,
         "factors": factors,
         "categories": categories,
         "similarity_samples": sum(row.get("similarity") is not None for row in rows),
@@ -424,8 +460,12 @@ def format_feature_importance_report(report: dict[str, Any]) -> str:
         f"Сильное продолжение: {float(report['strong_rate']):.1f}%",
         f"Любое продолжение: {float(report['continuation_rate']):.1f}%",
         f"Средний результат: {float(report['average_return']):+.1f}%",
+        f"Медиана: {float(report['median_return']):+.1f}%",
+        f"Обрезанное среднее (5%): {float(report['trimmed_mean_return']):+.1f}%",
+        f"Среднее |движение|: {float(report['mean_absolute_return']):.1f}%",
+        f"Стандартное отклонение: {float(report['return_stddev']):.1f}%",
         "",
-        "📊 Влияние факторов",
+        "📊 Историческая эффективность факторов",
     ]
 
     factors = list(report.get("factors") or [])
@@ -438,7 +478,9 @@ def format_feature_importance_report(report: dict[str, Any]) -> str:
                 f"{index}. {factor['label']} — {factor['importance']:.1f}/100\n"
                 f"   Лучший диапазон: {best['label']} · "
                 f"{best['continuation_rate']:.1f}% продолжений "
-                f"(n={best['samples']})"
+                f"(n={best['samples']})\n"
+                f"   Надёжность: {best['reliability']['stars_text']} "
+                f"({best['reliability']['label']})"
             )
 
     similarity_samples = int(report.get("similarity_samples") or 0)

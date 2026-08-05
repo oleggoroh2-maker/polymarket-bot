@@ -525,6 +525,38 @@ async def stats_action(
             if ai_stats['memory_24h']['average_directional_return'] is not None
             else "накопление данных\n"
         )
+        + f"Медиана: "
+        + (
+            f"{ai_stats['memory_24h']['median_directional_return']:+.1f}%\n"
+            if ai_stats['memory_24h'].get('median_directional_return') is not None
+            else "накопление данных\n"
+        )
+        + f"Обрезанное среднее (5%): "
+        + (
+            f"{ai_stats['memory_24h']['trimmed_mean_directional_return']:+.1f}%\n"
+            if ai_stats['memory_24h'].get('trimmed_mean_directional_return') is not None
+            else "накопление данных\n"
+        )
+        + f"Среднее |движение|: "
+        + (
+            f"{ai_stats['memory_24h']['mean_absolute_directional_return']:.1f}%\n"
+            if ai_stats['memory_24h'].get('mean_absolute_directional_return') is not None
+            else "накопление данных\n"
+        )
+        + f"Стандартное отклонение: "
+        + (
+            f"{ai_stats['memory_24h']['directional_return_stddev']:.1f}%\n"
+            if ai_stats['memory_24h'].get('directional_return_stddev') is not None
+            else "накопление данных\n"
+        )
+        + "\n📈 Распределение результата\n"
+        + f"≥ +50%: {ai_stats['memory_24h'].get('result_distribution', {}).get('gte_50', 0)}\n"
+        + f"+20…+50%: {ai_stats['memory_24h'].get('result_distribution', {}).get('20_to_50', 0)}\n"
+        + f"0…+20%: {ai_stats['memory_24h'].get('result_distribution', {}).get('0_to_20', 0)}\n"
+        + f"0%: {ai_stats['memory_24h'].get('result_distribution', {}).get('zero', 0)}\n"
+        + f"−20…0%: {ai_stats['memory_24h'].get('result_distribution', {}).get('minus_20_to_0', 0)}\n"
+        + f"−50…−20%: {ai_stats['memory_24h'].get('result_distribution', {}).get('minus_50_to_minus_20', 0)}\n"
+        + f"< −50%: {ai_stats['memory_24h'].get('result_distribution', {}).get('lt_minus_50', 0)}\n"
         + f"PUMP: {ai_stats['memory_24h']['pump_successful']}/"
         f"{ai_stats['memory_24h']['pump_total']} сильных\n"
         f"DIP: {ai_stats['memory_24h']['dip_successful']}/"
