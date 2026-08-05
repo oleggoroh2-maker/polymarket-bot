@@ -18,6 +18,7 @@ import config
 from adaptive_ai import CURRENT_WEIGHTS, generate_weight_proposal, get_proposal_history
 from database import get_connection
 from result_normalization import normalized_training_return
+from price_intelligence import calculate_price_intelligence
 
 
 LABELS = {
@@ -64,6 +65,7 @@ def ensure_simulator_schema() -> None:
                 created_at TEXT NOT NULL,
                 current_score REAL NOT NULL,
                 shadow_score REAL NOT NULL,
+                price_score REAL,
                 current_weights_json TEXT NOT NULL,
                 shadow_weights_json TEXT NOT NULL,
                 factors_json TEXT NOT NULL
@@ -73,6 +75,9 @@ def ensure_simulator_schema() -> None:
             ON ai_simulator_signals (created_at DESC);
             """
         )
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ai_simulator_signals)").fetchall()}
+        if "price_score" not in columns:
+            connection.execute("ALTER TABLE ai_simulator_signals ADD COLUMN price_score REAL")
         connection.commit()
 
 
@@ -148,17 +153,20 @@ def record_simulator_signal(
     shadow_weights = _latest_shadow_weights()
     current_score = calculate_composite_score(factors, current_weights)
     shadow_score = calculate_composite_score(factors, shadow_weights)
+    price_data = calculate_price_intelligence(alert)
+    price_adjustment = float(price_data.get("price_intelligence_adjustment") or 0.0)
+    price_score = _clip(shadow_score + price_adjustment)
 
     with closing(get_connection()) as connection:
         connection.execute(
             """
             INSERT OR REPLACE INTO ai_simulator_signals (
-                signal_id, created_at, current_score, shadow_score,
+                signal_id, created_at, current_score, shadow_score, price_score,
                 current_weights_json, shadow_weights_json, factors_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                str(signal_id), _now_iso(), current_score, shadow_score,
+                str(signal_id), _now_iso(), current_score, shadow_score, price_score,
                 json.dumps(current_weights, ensure_ascii=False),
                 json.dumps(shadow_weights, ensure_ascii=False),
                 json.dumps(factors, ensure_ascii=False),
@@ -212,7 +220,7 @@ def get_simulator_report(
         with closing(get_connection()) as connection:
             raw_rows = connection.execute(
                 """
-                SELECT sim.signal_id, sim.current_score, sim.shadow_score,
+                SELECT sim.signal_id, sim.current_score, sim.shadow_score, sim.price_score,
                        o.status, o.directional_return_percent, s.title,
                        sim.created_at
                 FROM ai_simulator_signals sim
@@ -232,11 +240,12 @@ def get_simulator_report(
             "signal_id": str(row[0]),
             "current_score": float(row[1]),
             "shadow_score": float(row[2]),
-            "status": str(row[3]).upper(),
-            "return": normalized_training_return(row[4]),
-            "raw_return": float(row[4] or 0.0),
-            "title": str(row[5] or ""),
-            "created_at": str(row[6] or ""),
+            "price_score": float(row[3] if row[3] is not None else row[2]),
+            "status": str(row[4]).upper(),
+            "return": normalized_training_return(row[5]),
+            "raw_return": float(row[5] or 0.0),
+            "title": str(row[6] or ""),
+            "created_at": str(row[7] or ""),
         }
         for row in raw_rows
     ]
@@ -255,15 +264,18 @@ def get_simulator_report(
     top_count = max(1, int(round(total * fraction)))
     current_top = sorted(rows, key=lambda item: item["current_score"], reverse=True)[:top_count]
     shadow_top = sorted(rows, key=lambda item: item["shadow_score"], reverse=True)[:top_count]
+    price_top = sorted(rows, key=lambda item: item["price_score"], reverse=True)[:top_count]
 
     current_ids = {row["signal_id"] for row in current_top}
     shadow_ids = {row["signal_id"] for row in shadow_top}
+    price_ids = {row["signal_id"] for row in price_top}
     overlap = len(current_ids & shadow_ids)
     promoted = [row for row in shadow_top if row["signal_id"] not in current_ids]
     demoted = [row for row in current_top if row["signal_id"] not in shadow_ids]
 
     current_stats = _model_stats(current_top)
     shadow_stats = _model_stats(shadow_top)
+    price_stats = _model_stats(price_top)
     return {
         "checkpoint_minutes": checkpoint,
         "evaluated": total,
@@ -273,9 +285,14 @@ def get_simulator_report(
         "top_count": top_count,
         "current": current_stats,
         "shadow": shadow_stats,
+        "price_intelligence": price_stats,
         "strong_delta": shadow_stats["strong_rate"] - current_stats["strong_rate"],
         "continuation_delta": shadow_stats["continuation_rate"] - current_stats["continuation_rate"],
         "return_delta": shadow_stats["average_return"] - current_stats["average_return"],
+        "price_strong_delta": price_stats["strong_rate"] - current_stats["strong_rate"],
+        "price_continuation_delta": price_stats["continuation_rate"] - current_stats["continuation_rate"],
+        "price_return_delta": price_stats["average_return"] - current_stats["average_return"],
+        "price_overlap": len(current_ids & price_ids),
         "overlap": overlap,
         "promoted": promoted[:5],
         "demoted": demoted[:5],
@@ -296,6 +313,7 @@ def format_simulator_report(report: dict[str, Any]) -> str:
     fraction = float(report.get("top_fraction") or 0.0) * 100.0
     current = report.get("current") or {}
     shadow = report.get("shadow") or {}
+    price_model = report.get("price_intelligence") or {}
 
     lines = [
         "🧪 AI Simulator · Shadow Mode",
@@ -314,11 +332,22 @@ def format_simulator_report(report: dict[str, Any]) -> str:
         f"🟡 Любое продолжение: {float(shadow.get('continuation_rate') or 0):.1f}%",
         f"📈 Нормализованный результат: {float(shadow.get('average_return') or 0):+.1f}%",
         "",
+        "💰 Теневая модель + Price Intelligence",
+        f"✅ Сильное продолжение: {float(price_model.get('strong_rate') or 0):.1f}%",
+        f"🟡 Любое продолжение: {float(price_model.get('continuation_rate') or 0):.1f}%",
+        f"📈 Нормализованный результат: {float(price_model.get('average_return') or 0):+.1f}%",
+        "",
         "📊 Разница теневой модели",
         f"• Сильное: {float(report.get('strong_delta') or 0):+.1f} п.п.",
         f"• Любое: {float(report.get('continuation_delta') or 0):+.1f} п.п.",
         f"• Средний результат: {float(report.get('return_delta') or 0):+.1f} п.п.",
         f"• Совпало в топе: {int(report.get('overlap') or 0)}/{top_count}",
+        "",
+        "💰 Разница Price Intelligence",
+        f"• Сильное: {float(report.get('price_strong_delta') or 0):+.1f} п.п.",
+        f"• Любое: {float(report.get('price_continuation_delta') or 0):+.1f} п.п.",
+        f"• Средний результат: {float(report.get('price_return_delta') or 0):+.1f} п.п.",
+        f"• Совпало в топе: {int(report.get('price_overlap') or 0)}/{top_count}",
     ]
 
     if not report.get("ready"):

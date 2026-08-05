@@ -605,6 +605,9 @@ def record_alert(alert: dict[str, Any]) -> str:
         "signal_confidence": alert.get("signal_confidence"),
         "confidence_tier": alert.get("confidence_tier"),
         "confidence_components": alert.get("confidence_components"),
+        "price_bucket": alert.get("price_bucket"),
+        "price_intelligence_adjustment": alert.get("price_intelligence_adjustment"),
+        "price_intelligence_samples": alert.get("price_intelligence_samples"),
     }
 
     with closing(get_connection()) as connection:

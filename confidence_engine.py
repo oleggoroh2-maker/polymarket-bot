@@ -122,6 +122,7 @@ def calculate_confidence(alert: dict[str, Any]) -> dict[str, Any]:
     liquidity = max(0.0, _number(alert.get("liquidity")))
     volume_change = _optional_number(alert.get("volume_change_percent"))
     liquidity_change = _optional_number(alert.get("liquidity_change_percent"))
+    price_intelligence = _optional_number(alert.get("price_intelligence_adjustment"))
 
     # Base is deliberately neutral. Each module contributes a bounded amount.
     components: list[dict[str, Any]] = []
@@ -213,6 +214,7 @@ def record_confidence_signal(signal_id: str, alert: dict[str, Any]) -> None:
             "volume_change_percent", "liquidity_change_percent",
             "similarity_average", "similarity_strong_rate",
             "calibration_strong_rate", "category", "alert_type",
+            "price_bucket", "price_intelligence_adjustment",
         )
     }
     with closing(get_connection()) as connection:

@@ -61,6 +61,10 @@ from confidence_engine import (
     format_confidence_report,
     get_confidence_report,
 )
+from price_intelligence import (
+    format_price_intelligence_report,
+    get_price_intelligence_report,
+)
 from calibration_engine import (
     calibrate_signal,
     get_calibration_report,
@@ -100,6 +104,7 @@ keyboard = ReplyKeyboardMarkup(
         ["🧠 Проверки AI", "🛡 Cooldown"],
         ["🧠 AI Insights", "🧠 Adaptive AI"],
         ["🧪 AI Simulator", "🎯 Confidence"],
+        ["💰 Price Intelligence"],
         ["⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
@@ -680,6 +685,26 @@ async def confidence_action(
         return
 
     await update.message.reply_text(format_confidence_report(report))
+
+
+# ---------------- PRICE INTELLIGENCE / SHADOW MODE ----------------
+
+async def price_intelligence_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+
+    await update.message.reply_text("💰 Анализирую эффективность ценовых диапазонов...")
+    try:
+        report = await asyncio.to_thread(get_price_intelligence_report)
+    except Exception as error:
+        logger.exception("Ошибка Price Intelligence")
+        await update.message.reply_text(f"❌ Ошибка:\n{error}")
+        return
+
+    await update.message.reply_text(format_price_intelligence_report(report))
 
 
 # ---------------- SMART COOLDOWN ANALYTICS ----------------
@@ -1488,6 +1513,9 @@ async def handle_buttons(
     elif text == "🎯 Confidence":
         await confidence_action(update, context)
 
+    elif text == "💰 Price Intelligence":
+        await price_intelligence_action(update, context)
+
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
 
@@ -1562,6 +1590,7 @@ async def handle_buttons(
             "🛡 Cooldown — статистика и последние блокировки\n"
             "🧠 AI Insights — эффективность факторов и категорий\n"
             "🎯 Confidence — теневой итоговый рейтинг сигналов\n"
+            "💰 Price Intelligence — эффективность стартовых цен\n"
             "🧠 Adaptive AI — теневые рекомендации весов\n"
             "⚙️ Качество сигналов — фильтр ALL/GOOD/PREMIUM\n"
             "⭐ Мои события — избранные рынки и заметки\n"
@@ -1675,6 +1704,13 @@ def main() -> None:
         CommandHandler(
             "confidence",
             confidence_action,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "price",
+            price_intelligence_action,
         )
     )
 
