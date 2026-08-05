@@ -549,6 +549,31 @@ async def stats_action(
             if ai_stats['memory_24h'].get('directional_return_stddev') is not None
             else "накопление данных\n"
         )
+        + "\n🧮 Нормализованные метрики\n"
+        + "Capped-среднее (±100%): "
+        + (
+            f"{ai_stats['memory_24h']['capped_average_directional_return']:+.1f}%\n"
+            if ai_stats['memory_24h'].get('capped_average_directional_return') is not None
+            else "накопление данных\n"
+        )
+        + "Signed-log среднее: "
+        + (
+            f"{ai_stats['memory_24h']['normalized_average_directional_return']:+.1f}%\n"
+            if ai_stats['memory_24h'].get('normalized_average_directional_return') is not None
+            else "накопление данных\n"
+        )
+        + "Signed-log медиана: "
+        + (
+            f"{ai_stats['memory_24h']['normalized_median_directional_return']:+.1f}%\n"
+            if ai_stats['memory_24h'].get('normalized_median_directional_return') is not None
+            else "накопление данных\n"
+        )
+        + "Signed-log σ: "
+        + (
+            f"{ai_stats['memory_24h']['normalized_directional_return_stddev']:.1f}%\n"
+            if ai_stats['memory_24h'].get('normalized_directional_return_stddev') is not None
+            else "накопление данных\n"
+        )
         + "\n📈 Распределение результата\n"
         + f"≥ +50%: {ai_stats['memory_24h'].get('result_distribution', {}).get('gte_50', 0)}\n"
         + f"+20…+50%: {ai_stats['memory_24h'].get('result_distribution', {}).get('20_to_50', 0)}\n"
@@ -557,6 +582,13 @@ async def stats_action(
         + f"−20…0%: {ai_stats['memory_24h'].get('result_distribution', {}).get('minus_20_to_0', 0)}\n"
         + f"−50…−20%: {ai_stats['memory_24h'].get('result_distribution', {}).get('minus_50_to_minus_20', 0)}\n"
         + f"< −50%: {ai_stats['memory_24h'].get('result_distribution', {}).get('lt_minus_50', 0)}\n"
+        + "\n💰 По стартовой цене\n"
+        + "".join(
+            f"• {item['label']}: Strong {item['strong_rate']:.1f}% · "
+            f"Любое {item['continuation_rate']:.1f}% · "
+            f"Норм. {item['normalized_average_return']:+.1f}% (n={item['samples']})\n"
+            for item in ai_stats['memory_24h'].get('entry_price_buckets', [])
+        )
         + f"PUMP: {ai_stats['memory_24h']['pump_successful']}/"
         f"{ai_stats['memory_24h']['pump_total']} сильных\n"
         f"DIP: {ai_stats['memory_24h']['dip_successful']}/"

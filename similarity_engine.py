@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 import config
 from database import get_connection
+from result_normalization import normalized_training_return
 
 CHECKPOINT_MINUTES = int(getattr(config, "SIMILARITY_CHECKPOINT_MINUTES", 1440))
 MAX_CANDIDATES = int(getattr(config, "SIMILARITY_MAX_CANDIDATES", 1500))
@@ -152,6 +153,7 @@ def _load_history() -> list[dict[str, Any]]:
             "liquidity_change_percent": metadata.get("liquidity_change_percent"),
             "momentum": metadata.get("momentum"),
             "directional_return": _num(row[11]),
+            "normalized_return": normalized_training_return(row[11]),
             "status": str(row[12] or ""),
         })
 
@@ -228,7 +230,7 @@ def analyze_similarity(signal: dict[str, Any]) -> dict[str, Any]:
     scores = [score for score, _ in selected]
     strong = sum(row["status"] == "SUCCESS" for row in rows)
     continued = sum(row["status"] in {"SUCCESS", "PARTIAL"} for row in rows)
-    average_return = sum(row["directional_return"] for row in rows) / len(rows)
+    average_return = sum(row["normalized_return"] for row in rows) / len(rows)
     best_score, best = max(
         selected,
         key=lambda item: item[1]["directional_return"],

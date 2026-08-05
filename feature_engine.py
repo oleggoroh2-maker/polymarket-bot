@@ -10,6 +10,8 @@ import math
 from statistics import mean, median, pstdev
 from typing import Any, Optional
 
+from result_normalization import normalized_training_return
+
 FEATURE_NAMES = [
     "price_logit",
     "log_liquidity",
@@ -305,7 +307,8 @@ def _insight_rows(checkpoint_minutes: int, max_rows: int) -> list[dict[str, Any]
             "status": status,
             "strong": status == "SUCCESS",
             "continued": status in {"SUCCESS", "PARTIAL"},
-            "return": _number(row[9]),
+            "raw_return": _number(row[9]),
+            "return": normalized_training_return(row[9]),
         })
     return result
 
@@ -442,6 +445,7 @@ def get_feature_importance_report(
         "trimmed_mean_return": _trimmed_mean_values([row["return"] for row in rows], 0.05),
         "mean_absolute_return": sum(abs(row["return"]) for row in rows) / total,
         "return_stddev": pstdev([row["return"] for row in rows]) if total >= 2 else 0.0,
+        "raw_average_return": sum(row["raw_return"] for row in rows) / total,
         "factors": factors,
         "categories": categories,
         "similarity_samples": sum(row.get("similarity") is not None for row in rows),
@@ -459,7 +463,8 @@ def format_feature_importance_report(report: dict[str, Any]) -> str:
         f"Проверено сигналов: {total}",
         f"Сильное продолжение: {float(report['strong_rate']):.1f}%",
         f"Любое продолжение: {float(report['continuation_rate']):.1f}%",
-        f"Средний результат: {float(report['average_return']):+.1f}%",
+        f"Нормализованный результат: {float(report['average_return']):+.1f}%",
+        f"Raw-среднее (справочно): {float(report['raw_average_return']):+.1f}%",
         f"Медиана: {float(report['median_return']):+.1f}%",
         f"Обрезанное среднее (5%): {float(report['trimmed_mean_return']):+.1f}%",
         f"Среднее |движение|: {float(report['mean_absolute_return']):.1f}%",

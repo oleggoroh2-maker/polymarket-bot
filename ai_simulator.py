@@ -17,6 +17,7 @@ from typing import Any
 import config
 from adaptive_ai import CURRENT_WEIGHTS, generate_weight_proposal, get_proposal_history
 from database import get_connection
+from result_normalization import normalized_training_return
 
 
 LABELS = {
@@ -232,7 +233,8 @@ def get_simulator_report(
             "current_score": float(row[1]),
             "shadow_score": float(row[2]),
             "status": str(row[3]).upper(),
-            "return": float(row[4] or 0.0),
+            "return": normalized_training_return(row[4]),
+            "raw_return": float(row[4] or 0.0),
             "title": str(row[5] or ""),
             "created_at": str(row[6] or ""),
         }
@@ -305,12 +307,12 @@ def format_simulator_report(report: dict[str, Any]) -> str:
         "⚙️ Текущие веса",
         f"✅ Сильное продолжение: {float(current.get('strong_rate') or 0):.1f}%",
         f"🟡 Любое продолжение: {float(current.get('continuation_rate') or 0):.1f}%",
-        f"📈 Средний результат: {float(current.get('average_return') or 0):+.1f}%",
+        f"📈 Нормализованный результат: {float(current.get('average_return') or 0):+.1f}%",
         "",
         "🧠 Теневые веса",
         f"✅ Сильное продолжение: {float(shadow.get('strong_rate') or 0):.1f}%",
         f"🟡 Любое продолжение: {float(shadow.get('continuation_rate') or 0):.1f}%",
-        f"📈 Средний результат: {float(shadow.get('average_return') or 0):+.1f}%",
+        f"📈 Нормализованный результат: {float(shadow.get('average_return') or 0):+.1f}%",
         "",
         "📊 Разница теневой модели",
         f"• Сильное: {float(report.get('strong_delta') or 0):+.1f} п.п.",

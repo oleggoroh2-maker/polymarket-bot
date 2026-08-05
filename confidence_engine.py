@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 import config
 from database import get_connection
+from result_normalization import normalized_training_return
 
 
 def _now_iso() -> str:
@@ -277,7 +278,8 @@ def get_confidence_report(
             "confidence": float(row[0]),
             "tier": str(row[1]),
             "status": str(row[2]).upper(),
-            "return": float(row[3] or 0.0),
+            "return": normalized_training_return(row[3]),
+            "raw_return": float(row[3] or 0.0),
         }
         for row in rows
     ]
@@ -338,7 +340,7 @@ def format_confidence_report(report: dict[str, Any]) -> str:
         average_text = f"{float(average):+.1f}%" if average is not None else "—"
         lines.extend([
             f"• Confidence {bucket['label']} (n={total})",
-            f"  Strong: {strong:.1f}% · Любое: {continuation:.1f}% · Среднее: {average_text}",
+            f"  Strong: {strong:.1f}% · Любое: {continuation:.1f}% · Норм.: {average_text}",
         ])
 
     lines.extend([

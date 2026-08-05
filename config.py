@@ -126,3 +126,10 @@ CONFIDENCE_CHECKPOINT_MINUTES = 1440
 CONFIDENCE_MAX_ROWS = 5000
 CONFIDENCE_MIN_EVALUATED = 30
 CONFIDENCE_SHADOW_MODE = True
+
+# Result Normalization v2.1
+# Raw percentages stay in the database and audit. AI diagnostics use a
+# signed-log transform with symmetric clipping to reduce tiny-price outliers.
+RESULT_RETURN_CAP_PERCENT = 100.0
+RESULT_LOG_SCALE_PERCENT = 100.0
+RESULT_NORMALIZED_CAP_PERCENT = 100.0

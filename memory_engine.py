@@ -8,6 +8,11 @@ from typing import Any
 
 import config
 from database import get_connection
+from result_normalization import (
+    capped_return_percent,
+    entry_price_bucket,
+    normalized_training_return,
+)
 
 SUCCESS_MOVE_PERCENT = float(getattr(config, "AI_SUCCESS_MOVE_PERCENT", 10.0))
 PARTIAL_MOVE_PERCENT = float(getattr(config, "AI_PARTIAL_MOVE_PERCENT", 3.0))
@@ -91,8 +96,9 @@ def get_memory_stats(checkpoint_minutes: int = 1440) -> dict[str, Any]:
         ).fetchone()
         return_rows = connection.execute(
             """
-            SELECT o.directional_return_percent
+            SELECT o.directional_return_percent, s.entry_price, o.status
             FROM signal_outcomes o
+            JOIN ai_signals s ON s.signal_id = o.signal_id
             WHERE o.checkpoint_minutes = ?
               AND o.status IS NOT NULL
               AND o.directional_return_percent IS NOT NULL
@@ -101,6 +107,34 @@ def get_memory_stats(checkpoint_minutes: int = 1440) -> dict[str, Any]:
         ).fetchall()
 
     values = [float(item[0]) for item in return_rows]
+    capped_values = [capped_return_percent(value) for value in values]
+    normalized_values = [normalized_training_return(value) for value in values]
+    price_buckets: dict[str, dict[str, float | int | None]] = {}
+    for raw_return, entry_price, status in return_rows:
+        label = entry_price_bucket(entry_price)
+        bucket = price_buckets.setdefault(label, {
+            "samples": 0, "strong": 0, "continued": 0,
+            "normalized_sum": 0.0, "raw_sum": 0.0,
+        })
+        bucket["samples"] = int(bucket["samples"]) + 1
+        bucket["strong"] = int(bucket["strong"]) + (1 if str(status).upper() == "SUCCESS" else 0)
+        bucket["continued"] = int(bucket["continued"]) + (1 if str(status).upper() in {"SUCCESS", "PARTIAL"} else 0)
+        bucket["normalized_sum"] = float(bucket["normalized_sum"]) + normalized_training_return(raw_return)
+        bucket["raw_sum"] = float(bucket["raw_sum"]) + float(raw_return)
+    price_bucket_stats = []
+    for label in ("<1¢", "1–5¢", "5–20¢", "20–50¢", "≥50¢"):
+        bucket = price_buckets.get(label)
+        if not bucket:
+            continue
+        samples = int(bucket["samples"])
+        price_bucket_stats.append({
+            "label": label,
+            "samples": samples,
+            "strong_rate": int(bucket["strong"]) / samples * 100.0,
+            "continuation_rate": int(bucket["continued"]) / samples * 100.0,
+            "normalized_average_return": float(bucket["normalized_sum"]) / samples,
+            "raw_average_return": float(bucket["raw_sum"]) / samples,
+        })
     total = int(row[0] or 0) if row else 0
     successful = int(row[1] or 0) if row else 0
     partial = int(row[2] or 0) if row else 0
@@ -117,6 +151,10 @@ def get_memory_stats(checkpoint_minutes: int = 1440) -> dict[str, Any]:
     trimmed = _trimmed_mean(values, 0.05)
     mean_absolute = (sum(abs(value) for value in values) / len(values)) if values else None
     standard_deviation = pstdev(values) if len(values) >= 2 else (0.0 if values else None)
+    capped_average = (sum(capped_values) / len(capped_values)) if capped_values else None
+    normalized_average = (sum(normalized_values) / len(normalized_values)) if normalized_values else None
+    normalized_median = median(normalized_values) if normalized_values else None
+    normalized_stddev = pstdev(normalized_values) if len(normalized_values) >= 2 else (0.0 if normalized_values else None)
 
     return {
         "checkpoint_minutes": int(checkpoint_minutes),
@@ -132,7 +170,12 @@ def get_memory_stats(checkpoint_minutes: int = 1440) -> dict[str, Any]:
         "trimmed_mean_directional_return": trimmed,
         "mean_absolute_directional_return": mean_absolute,
         "directional_return_stddev": standard_deviation,
+        "capped_average_directional_return": capped_average,
+        "normalized_average_directional_return": normalized_average,
+        "normalized_median_directional_return": normalized_median,
+        "normalized_directional_return_stddev": normalized_stddev,
         "result_distribution": _result_distribution(values),
+        "entry_price_buckets": price_bucket_stats,
         "pump_total": pump_total,
         "pump_successful": pump_successful,
         "dip_total": dip_total,

@@ -9,6 +9,7 @@ from typing import Any
 
 import config
 from database import get_connection
+from result_normalization import normalized_training_return
 
 CHECKPOINT_MINUTES = int(getattr(config, "CALIBRATION_CHECKPOINT_MINUTES", 1440))
 MIN_HISTORY_SAMPLES = int(getattr(config, "CALIBRATION_MIN_HISTORY_SAMPLES", 20))
@@ -67,7 +68,8 @@ def _history_rows() -> list[dict[str, Any]]:
             "price_change": abs(_num(metadata.get("price_change_percent"))),
             "volume_change": abs(_num(metadata.get("volume_change_percent"))),
             "liquidity_change": abs(_num(metadata.get("liquidity_change_percent"))),
-            "return": _num(row[7]),
+            "return": normalized_training_return(row[7]),
+            "raw_return": _num(row[7]),
             "status": str(row[8] or ""),
         })
     return result
