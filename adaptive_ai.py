@@ -15,7 +15,7 @@ from typing import Any
 
 import config
 from database import get_connection
-from feature_engine import get_feature_importance_report
+from feature_intelligence import get_feature_intelligence_report
 
 
 CURRENT_WEIGHTS: dict[str, float] = {
@@ -88,7 +88,7 @@ def _factor_evidence(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
             continue
         best = factor.get("best") or {}
         evidence[key] = {
-            "importance": float(factor.get("importance") or 0.0),
+            "importance": float(factor.get("effective_importance") or factor.get("importance") or 0.0),
             "best_range": str(best.get("label") or "—"),
             "continuation_rate": float(best.get("continuation_rate") or 0.0),
             "samples": int(best.get("samples") or 0),
@@ -172,14 +172,15 @@ def generate_weight_proposal(
         if checkpoint_minutes is not None
         else getattr(config, "ADAPTIVE_AI_CHECKPOINT_MINUTES", 1440)
     )
-    report = get_feature_importance_report(
-        checkpoint,
-        int(max_rows if max_rows is not None else getattr(config, "ADAPTIVE_AI_MAX_ROWS", 5000)),
-        int(
+    report = get_feature_intelligence_report(
+        checkpoint_minutes=checkpoint,
+        max_rows=int(max_rows if max_rows is not None else getattr(config, "ADAPTIVE_AI_MAX_ROWS", 5000)),
+        min_bucket_samples=int(
             min_bucket_samples
             if min_bucket_samples is not None
             else getattr(config, "ADAPTIVE_AI_MIN_BUCKET_SAMPLES", 20)
         ),
+        save=True,
     )
     proposed, details = _propose_weights(report)
     confidence = _confidence(
