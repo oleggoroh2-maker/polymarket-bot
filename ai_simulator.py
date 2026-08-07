@@ -19,6 +19,7 @@ from adaptive_ai import CURRENT_WEIGHTS, generate_weight_proposal, get_proposal_
 from database import get_connection
 from result_normalization import normalized_training_return
 from price_intelligence import calculate_price_intelligence
+from score_recalibration import calculate_score_recalibration
 
 
 LABELS = {
@@ -222,7 +223,7 @@ def get_simulator_report(
                 """
                 SELECT sim.signal_id, sim.current_score, sim.shadow_score, sim.price_score,
                        o.status, o.directional_return_percent, s.title,
-                       sim.created_at
+                       sim.created_at, s.base_score, s.alert_type
                 FROM ai_simulator_signals sim
                 JOIN signal_outcomes o ON o.signal_id = sim.signal_id
                 JOIN ai_signals s ON s.signal_id = sim.signal_id
@@ -246,6 +247,8 @@ def get_simulator_report(
             "raw_return": float(row[5] or 0.0),
             "title": str(row[6] or ""),
             "created_at": str(row[7] or ""),
+            "base_score": float(row[8] or 0.0),
+            "alert_type": str(row[9] or ""),
         }
         for row in raw_rows
     ]
@@ -264,11 +267,16 @@ def get_simulator_report(
     top_count = max(1, int(round(total * fraction)))
     current_top = sorted(rows, key=lambda item: item["current_score"], reverse=True)[:top_count]
     shadow_top = sorted(rows, key=lambda item: item["shadow_score"], reverse=True)[:top_count]
+    for item in rows:
+        recal = calculate_score_recalibration(item["base_score"], item["alert_type"])
+        item["recalibrated_score"] = _clip(item["price_score"] + float(recal.get("adjustment") or 0.0))
     price_top = sorted(rows, key=lambda item: item["price_score"], reverse=True)[:top_count]
+    recal_top = sorted(rows, key=lambda item: item["recalibrated_score"], reverse=True)[:top_count]
 
     current_ids = {row["signal_id"] for row in current_top}
     shadow_ids = {row["signal_id"] for row in shadow_top}
     price_ids = {row["signal_id"] for row in price_top}
+    recal_ids = {row["signal_id"] for row in recal_top}
     overlap = len(current_ids & shadow_ids)
     promoted = [row for row in shadow_top if row["signal_id"] not in current_ids]
     demoted = [row for row in current_top if row["signal_id"] not in shadow_ids]
@@ -276,6 +284,7 @@ def get_simulator_report(
     current_stats = _model_stats(current_top)
     shadow_stats = _model_stats(shadow_top)
     price_stats = _model_stats(price_top)
+    recal_stats = _model_stats(recal_top)
     return {
         "checkpoint_minutes": checkpoint,
         "evaluated": total,
@@ -286,6 +295,7 @@ def get_simulator_report(
         "current": current_stats,
         "shadow": shadow_stats,
         "price_intelligence": price_stats,
+        "score_recalibration": recal_stats,
         "strong_delta": shadow_stats["strong_rate"] - current_stats["strong_rate"],
         "continuation_delta": shadow_stats["continuation_rate"] - current_stats["continuation_rate"],
         "return_delta": shadow_stats["average_return"] - current_stats["average_return"],
@@ -293,6 +303,10 @@ def get_simulator_report(
         "price_continuation_delta": price_stats["continuation_rate"] - current_stats["continuation_rate"],
         "price_return_delta": price_stats["average_return"] - current_stats["average_return"],
         "price_overlap": len(current_ids & price_ids),
+        "recal_strong_delta": recal_stats["strong_rate"] - current_stats["strong_rate"],
+        "recal_continuation_delta": recal_stats["continuation_rate"] - current_stats["continuation_rate"],
+        "recal_return_delta": recal_stats["average_return"] - current_stats["average_return"],
+        "recal_overlap": len(current_ids & recal_ids),
         "overlap": overlap,
         "promoted": promoted[:5],
         "demoted": demoted[:5],
@@ -314,6 +328,7 @@ def format_simulator_report(report: dict[str, Any]) -> str:
     current = report.get("current") or {}
     shadow = report.get("shadow") or {}
     price_model = report.get("price_intelligence") or {}
+    recal_model = report.get("score_recalibration") or {}
 
     lines = [
         "🧪 AI Simulator · Shadow Mode",
@@ -337,6 +352,11 @@ def format_simulator_report(report: dict[str, Any]) -> str:
         f"🟡 Любое продолжение: {float(price_model.get('continuation_rate') or 0):.1f}%",
         f"📈 Нормализованный результат: {float(price_model.get('average_return') or 0):+.1f}%",
         "",
+        "🧭 + Score Recalibration",
+        f"✅ Сильное продолжение: {float(recal_model.get('strong_rate') or 0):.1f}%",
+        f"🟡 Любое продолжение: {float(recal_model.get('continuation_rate') or 0):.1f}%",
+        f"📈 Нормализованный результат: {float(recal_model.get('average_return') or 0):+.1f}%",
+        "",
         "📊 Разница теневой модели",
         f"• Сильное: {float(report.get('strong_delta') or 0):+.1f} п.п.",
         f"• Любое: {float(report.get('continuation_delta') or 0):+.1f} п.п.",
@@ -348,6 +368,12 @@ def format_simulator_report(report: dict[str, Any]) -> str:
         f"• Любое: {float(report.get('price_continuation_delta') or 0):+.1f} п.п.",
         f"• Средний результат: {float(report.get('price_return_delta') or 0):+.1f} п.п.",
         f"• Совпало в топе: {int(report.get('price_overlap') or 0)}/{top_count}",
+        "",
+        "🧭 Разница Score Recalibration",
+        f"• Сильное: {float(report.get('recal_strong_delta') or 0):+.1f} п.п.",
+        f"• Любое: {float(report.get('recal_continuation_delta') or 0):+.1f} п.п.",
+        f"• Средний результат: {float(report.get('recal_return_delta') or 0):+.1f} п.п.",
+        f"• Совпало в топе: {int(report.get('recal_overlap') or 0)}/{top_count}",
     ]
 
     if not report.get("ready"):

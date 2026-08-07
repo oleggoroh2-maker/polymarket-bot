@@ -77,6 +77,10 @@ from calibration_audit import (
     format_calibration_audit_report,
     get_calibration_audit_report,
 )
+from score_recalibration import (
+    format_score_recalibration_report,
+    get_score_recalibration_report,
+)
 from calibration_engine import (
     calibrate_signal,
     get_calibration_report,
@@ -118,6 +122,7 @@ keyboard = ReplyKeyboardMarkup(
         ["🧪 AI Simulator", "🎯 Confidence"],
         ["💰 Price Intelligence", "📊 Feature Intelligence"],
         ["🧩 Combinations", "🎚 Score Audit"],
+        ["🧭 Score Recalibration"],
         ["⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
@@ -778,6 +783,24 @@ async def calibration_audit_action(
         await update.message.reply_text(f"❌ Ошибка:\n{error}")
         return
     await update.message.reply_text(format_calibration_audit_report(report))
+
+
+# ---------------- SCORE RECALIBRATION / SHADOW MODE ----------------
+
+async def score_recalibration_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+    await update.message.reply_text("🧭 Строю теневую перекалибровку Score и аудит OPPORTUNITY...")
+    try:
+        report = await asyncio.to_thread(get_score_recalibration_report)
+    except Exception as error:
+        logger.exception("Ошибка Score Recalibration")
+        await update.message.reply_text(f"❌ Ошибка:\n{error}")
+        return
+    await update.message.reply_text(format_score_recalibration_report(report))
 
 
 # ---------------- SMART COOLDOWN ANALYTICS ----------------
@@ -1598,6 +1621,9 @@ async def handle_buttons(
     elif text == "🎚 Score Audit":
         await calibration_audit_action(update, context)
 
+    elif text == "🧭 Score Recalibration":
+        await score_recalibration_action(update, context)
+
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
 
@@ -1676,6 +1702,7 @@ async def handle_buttons(
             "📊 Feature Intelligence — значимость и стабильность факторов\n"
             "🧩 Combinations — сильные и слабые сочетания факторов\n"
             "🎚 Score Audit — проверка калибровки Score\n"
+            "🧭 Score Recalibration — теневая перекалибровка + OPPORTUNITY audit\n"
             "🧠 Adaptive AI — теневые рекомендации весов\n"
             "⚙️ Качество сигналов — фильтр ALL/GOOD/PREMIUM\n"
             "⭐ Мои события — избранные рынки и заметки\n"
@@ -1817,6 +1844,13 @@ def main() -> None:
         CommandHandler(
             "scoreaudit",
             calibration_audit_action,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "recalibration",
+            score_recalibration_action,
         )
     )
 
