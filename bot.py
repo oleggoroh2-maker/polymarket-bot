@@ -69,6 +69,10 @@ from feature_intelligence import (
     format_feature_intelligence_report,
     get_feature_intelligence_report,
 )
+from combination_intelligence import (
+    format_combination_intelligence_report,
+    get_combination_intelligence_report,
+)
 from calibration_engine import (
     calibrate_signal,
     get_calibration_report,
@@ -109,6 +113,7 @@ keyboard = ReplyKeyboardMarkup(
         ["🧠 AI Insights", "🧠 Adaptive AI"],
         ["🧪 AI Simulator", "🎯 Confidence"],
         ["💰 Price Intelligence", "📊 Feature Intelligence"],
+        ["🧩 Combinations"],
         ["⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
@@ -729,6 +734,28 @@ async def feature_intelligence_action(
         return
 
     await update.message.reply_text(format_feature_intelligence_report(report))
+
+
+
+
+# ---------------- COMBINATION INTELLIGENCE / SHADOW MODE ----------------
+
+async def combination_intelligence_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+
+    await update.message.reply_text("🧩 Ищу сильные комбинации факторов...")
+    try:
+        report = await asyncio.to_thread(get_combination_intelligence_report)
+    except Exception as error:
+        logger.exception("Ошибка Combination Intelligence")
+        await update.message.reply_text(f"❌ Ошибка:\n{error}")
+        return
+
+    await update.message.reply_text(format_combination_intelligence_report(report))
 
 
 # ---------------- SMART COOLDOWN ANALYTICS ----------------
@@ -1543,6 +1570,9 @@ async def handle_buttons(
     elif text == "📊 Feature Intelligence":
         await feature_intelligence_action(update, context)
 
+    elif text == "🧩 Combinations":
+        await combination_intelligence_action(update, context)
+
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
 
@@ -1619,6 +1649,7 @@ async def handle_buttons(
             "🎯 Confidence — теневой итоговый рейтинг сигналов\n"
             "💰 Price Intelligence — эффективность стартовых цен\n"
             "📊 Feature Intelligence — значимость и стабильность факторов\n"
+            "🧩 Combinations — сильные и слабые сочетания факторов\n"
             "🧠 Adaptive AI — теневые рекомендации весов\n"
             "⚙️ Качество сигналов — фильтр ALL/GOOD/PREMIUM\n"
             "⭐ Мои события — избранные рынки и заметки\n"
@@ -1746,6 +1777,13 @@ def main() -> None:
         CommandHandler(
             "features",
             feature_intelligence_action,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "combinations",
+            combination_intelligence_action,
         )
     )
 
