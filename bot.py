@@ -73,6 +73,10 @@ from combination_intelligence import (
     format_combination_intelligence_report,
     get_combination_intelligence_report,
 )
+from calibration_audit import (
+    format_calibration_audit_report,
+    get_calibration_audit_report,
+)
 from calibration_engine import (
     calibrate_signal,
     get_calibration_report,
@@ -113,7 +117,7 @@ keyboard = ReplyKeyboardMarkup(
         ["🧠 AI Insights", "🧠 Adaptive AI"],
         ["🧪 AI Simulator", "🎯 Confidence"],
         ["💰 Price Intelligence", "📊 Feature Intelligence"],
-        ["🧩 Combinations"],
+        ["🧩 Combinations", "🎚 Score Audit"],
         ["⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
@@ -756,6 +760,24 @@ async def combination_intelligence_action(
         return
 
     await update.message.reply_text(format_combination_intelligence_report(report))
+
+
+# ---------------- SCORE CALIBRATION AUDIT / SHADOW MODE ----------------
+
+async def calibration_audit_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+    await update.message.reply_text("🎚 Проверяю калибровку Score и контекстные развороты...")
+    try:
+        report = await asyncio.to_thread(get_calibration_audit_report)
+    except Exception as error:
+        logger.exception("Ошибка Score Calibration Audit")
+        await update.message.reply_text(f"❌ Ошибка:\n{error}")
+        return
+    await update.message.reply_text(format_calibration_audit_report(report))
 
 
 # ---------------- SMART COOLDOWN ANALYTICS ----------------
@@ -1573,6 +1595,9 @@ async def handle_buttons(
     elif text == "🧩 Combinations":
         await combination_intelligence_action(update, context)
 
+    elif text == "🎚 Score Audit":
+        await calibration_audit_action(update, context)
+
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
 
@@ -1650,6 +1675,7 @@ async def handle_buttons(
             "💰 Price Intelligence — эффективность стартовых цен\n"
             "📊 Feature Intelligence — значимость и стабильность факторов\n"
             "🧩 Combinations — сильные и слабые сочетания факторов\n"
+            "🎚 Score Audit — проверка калибровки Score\n"
             "🧠 Adaptive AI — теневые рекомендации весов\n"
             "⚙️ Качество сигналов — фильтр ALL/GOOD/PREMIUM\n"
             "⭐ Мои события — избранные рынки и заметки\n"
@@ -1784,6 +1810,13 @@ def main() -> None:
         CommandHandler(
             "combinations",
             combination_intelligence_action,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "scoreaudit",
+            calibration_audit_action,
         )
     )
 
