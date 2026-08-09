@@ -20,6 +20,7 @@ from database import get_connection
 from result_normalization import normalized_training_return
 from price_intelligence import calculate_price_intelligence
 from score_recalibration import calculate_score_recalibration
+from combination_intelligence import calculate_combination_adjustment
 
 
 LABELS = {
@@ -67,6 +68,10 @@ def ensure_simulator_schema() -> None:
                 current_score REAL NOT NULL,
                 shadow_score REAL NOT NULL,
                 price_score REAL,
+                recal_score REAL,
+                no_opportunity_score REAL,
+                combination_score REAL,
+                combination_no_opportunity_score REAL,
                 current_weights_json TEXT NOT NULL,
                 shadow_weights_json TEXT NOT NULL,
                 factors_json TEXT NOT NULL
@@ -79,6 +84,9 @@ def ensure_simulator_schema() -> None:
         columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(ai_simulator_signals)").fetchall()}
         if "price_score" not in columns:
             connection.execute("ALTER TABLE ai_simulator_signals ADD COLUMN price_score REAL")
+        for name in ("recal_score", "no_opportunity_score", "combination_score", "combination_no_opportunity_score"):
+            if name not in columns:
+                connection.execute(f"ALTER TABLE ai_simulator_signals ADD COLUMN {name} REAL")
         connection.commit()
 
 
@@ -157,17 +165,34 @@ def record_simulator_signal(
     price_data = calculate_price_intelligence(alert)
     price_adjustment = float(price_data.get("price_intelligence_adjustment") or 0.0)
     price_score = _clip(shadow_score + price_adjustment)
+    recal = calculate_score_recalibration(alert.get("score"), alert.get("alert_type"))
+    recal_score = _clip(price_score + float(recal.get("adjustment") or 0.0))
+    is_opportunity = "OPPORTUNITY" in str(alert.get("alert_type") or "").upper()
+    opportunity_penalty = float(getattr(config, "AI_SIMULATOR_OPPORTUNITY_PENALTY", 100.0))
+    no_opportunity_score = _clip(recal_score - (opportunity_penalty if is_opportunity else 0.0))
+    combo_input = {
+        **alert,
+        "ai_quality": assessment.get("ai_quality"),
+        "ai_risk": assessment.get("ai_risk"),
+        "ml_probability": assessment.get("ml_probability"),
+        "entry_price": alert.get("current_price", alert.get("price")),
+    }
+    combo = calculate_combination_adjustment(combo_input)
+    combo_score = _clip(recal_score + float(combo.get("adjustment") or 0.0))
+    combination_no_opportunity_score = _clip(combo_score - (opportunity_penalty if is_opportunity else 0.0))
 
     with closing(get_connection()) as connection:
         connection.execute(
             """
             INSERT OR REPLACE INTO ai_simulator_signals (
                 signal_id, created_at, current_score, shadow_score, price_score,
+                recal_score, no_opportunity_score, combination_score, combination_no_opportunity_score,
                 current_weights_json, shadow_weights_json, factors_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(signal_id), _now_iso(), current_score, shadow_score, price_score,
+                recal_score, no_opportunity_score, combo_score, combination_no_opportunity_score,
                 json.dumps(current_weights, ensure_ascii=False),
                 json.dumps(shadow_weights, ensure_ascii=False),
                 json.dumps(factors, ensure_ascii=False),
@@ -222,6 +247,7 @@ def get_simulator_report(
             raw_rows = connection.execute(
                 """
                 SELECT sim.signal_id, sim.current_score, sim.shadow_score, sim.price_score,
+                       sim.recal_score, sim.no_opportunity_score, sim.combination_score, sim.combination_no_opportunity_score,
                        o.status, o.directional_return_percent, s.title,
                        sim.created_at, s.base_score, s.alert_type
                 FROM ai_simulator_signals sim
@@ -242,13 +268,17 @@ def get_simulator_report(
             "current_score": float(row[1]),
             "shadow_score": float(row[2]),
             "price_score": float(row[3] if row[3] is not None else row[2]),
-            "status": str(row[4]).upper(),
-            "return": normalized_training_return(row[5]),
-            "raw_return": float(row[5] or 0.0),
-            "title": str(row[6] or ""),
-            "created_at": str(row[7] or ""),
-            "base_score": float(row[8] or 0.0),
-            "alert_type": str(row[9] or ""),
+            "recal_score": None if row[4] is None else float(row[4]),
+            "no_opportunity_score": None if row[5] is None else float(row[5]),
+            "combination_score": None if row[6] is None else float(row[6]),
+            "combination_no_opportunity_score": None if row[7] is None else float(row[7]),
+            "status": str(row[8]).upper(),
+            "return": normalized_training_return(row[9]),
+            "raw_return": float(row[9] or 0.0),
+            "title": str(row[10] or ""),
+            "created_at": str(row[11] or ""),
+            "base_score": float(row[12] or 0.0),
+            "alert_type": str(row[13] or ""),
         }
         for row in raw_rows
     ]
@@ -267,16 +297,28 @@ def get_simulator_report(
     top_count = max(1, int(round(total * fraction)))
     current_top = sorted(rows, key=lambda item: item["current_score"], reverse=True)[:top_count]
     shadow_top = sorted(rows, key=lambda item: item["shadow_score"], reverse=True)[:top_count]
+    # Legacy rows predate Candidate Strategies v2. They remain in the old model
+    # comparisons, but candidate strategies use only scores frozen at signal time.
+    price_top = sorted(rows, key=lambda item: item["price_score"], reverse=True)[:top_count]
     for item in rows:
         recal = calculate_score_recalibration(item["base_score"], item["alert_type"])
-        item["recalibrated_score"] = _clip(item["price_score"] + float(recal.get("adjustment") or 0.0))
-    price_top = sorted(rows, key=lambda item: item["price_score"], reverse=True)[:top_count]
-    recal_top = sorted(rows, key=lambda item: item["recalibrated_score"], reverse=True)[:top_count]
+        item["legacy_recalibrated_score"] = _clip(item["price_score"] + float(recal.get("adjustment") or 0.0))
+    recal_top = sorted(rows, key=lambda item: item["legacy_recalibrated_score"], reverse=True)[:top_count]
+    candidate_rows = [row for row in rows if row.get("recal_score") is not None]
+    candidate_top_count = max(1, int(round(len(candidate_rows) * fraction))) if candidate_rows else 0
+    candidate_recal_top = sorted(candidate_rows, key=lambda item: item["recal_score"], reverse=True)[:candidate_top_count]
+    no_opp_top = sorted(candidate_rows, key=lambda item: item["no_opportunity_score"], reverse=True)[:candidate_top_count]
+    combo_top = sorted(candidate_rows, key=lambda item: item["combination_score"], reverse=True)[:candidate_top_count]
+    combo_no_opp_top = sorted(candidate_rows, key=lambda item: item["combination_no_opportunity_score"], reverse=True)[:candidate_top_count]
 
     current_ids = {row["signal_id"] for row in current_top}
     shadow_ids = {row["signal_id"] for row in shadow_top}
     price_ids = {row["signal_id"] for row in price_top}
     recal_ids = {row["signal_id"] for row in recal_top}
+    candidate_recal_ids = {row["signal_id"] for row in candidate_recal_top}
+    no_opp_ids = {row["signal_id"] for row in no_opp_top}
+    combo_ids = {row["signal_id"] for row in combo_top}
+    combo_no_opp_ids = {row["signal_id"] for row in combo_no_opp_top}
     overlap = len(current_ids & shadow_ids)
     promoted = [row for row in shadow_top if row["signal_id"] not in current_ids]
     demoted = [row for row in current_top if row["signal_id"] not in shadow_ids]
@@ -285,6 +327,10 @@ def get_simulator_report(
     shadow_stats = _model_stats(shadow_top)
     price_stats = _model_stats(price_top)
     recal_stats = _model_stats(recal_top)
+    candidate_recal_stats = _model_stats(candidate_recal_top)
+    no_opp_stats = _model_stats(no_opp_top)
+    combo_stats = _model_stats(combo_top)
+    combo_no_opp_stats = _model_stats(combo_no_opp_top)
     return {
         "checkpoint_minutes": checkpoint,
         "evaluated": total,
@@ -296,6 +342,12 @@ def get_simulator_report(
         "shadow": shadow_stats,
         "price_intelligence": price_stats,
         "score_recalibration": recal_stats,
+        "candidate_evaluated": len(candidate_rows),
+        "candidate_recalibration": candidate_recal_stats,
+        "candidate_top_count": candidate_top_count,
+        "no_opportunity": no_opp_stats,
+        "combination": combo_stats,
+        "combination_no_opportunity": combo_no_opp_stats,
         "strong_delta": shadow_stats["strong_rate"] - current_stats["strong_rate"],
         "continuation_delta": shadow_stats["continuation_rate"] - current_stats["continuation_rate"],
         "return_delta": shadow_stats["average_return"] - current_stats["average_return"],
@@ -307,6 +359,9 @@ def get_simulator_report(
         "recal_continuation_delta": recal_stats["continuation_rate"] - current_stats["continuation_rate"],
         "recal_return_delta": recal_stats["average_return"] - current_stats["average_return"],
         "recal_overlap": len(current_ids & recal_ids),
+        "candidate_recal_overlap": len(candidate_recal_ids & no_opp_ids),
+        "combination_overlap": len(candidate_recal_ids & combo_ids),
+        "combination_no_opp_overlap": len(candidate_recal_ids & combo_no_opp_ids),
         "overlap": overlap,
         "promoted": promoted[:5],
         "demoted": demoted[:5],
@@ -357,6 +412,35 @@ def format_simulator_report(report: dict[str, Any]) -> str:
         f"🟡 Любое продолжение: {float(recal_model.get('continuation_rate') or 0):.1f}%",
         f"📈 Нормализованный результат: {float(recal_model.get('average_return') or 0):+.1f}%",
         "",
+    ]
+    candidate_n = int(report.get("candidate_evaluated") or 0)
+    candidate_top = int(report.get("candidate_top_count") or 0)
+    if candidate_n:
+        candidate_recal = report.get("candidate_recalibration") or {}
+        no_opp = report.get("no_opportunity") or {}
+        combo = report.get("combination") or {}
+        combo_no = report.get("combination_no_opportunity") or {}
+        lines.extend([
+            "🧪 Candidate Strategies v2 · только сигналы после обновления",
+            f"Проверено: {candidate_n} · TOP: {candidate_top}",
+            "",
+            "🧭 Frozen Recalibration",
+            f"✅ Strong: {float(candidate_recal.get('strong_rate') or 0):.1f}% · 🟡 Любое: {float(candidate_recal.get('continuation_rate') or 0):.1f}% · 📈 {float(candidate_recal.get('average_return') or 0):+.1f}%",
+            "🚫 Recalibration + No OPPORTUNITY",
+            f"✅ Strong: {float(no_opp.get('strong_rate') or 0):.1f}% · 🟡 Любое: {float(no_opp.get('continuation_rate') or 0):.1f}% · 📈 {float(no_opp.get('average_return') or 0):+.1f}%",
+            "🧩 Recalibration + Combination bonus",
+            f"✅ Strong: {float(combo.get('strong_rate') or 0):.1f}% · 🟡 Любое: {float(combo.get('continuation_rate') or 0):.1f}% · 📈 {float(combo.get('average_return') or 0):+.1f}%",
+            "🏆 Recalibration + Combinations + No OPPORTUNITY",
+            f"✅ Strong: {float(combo_no.get('strong_rate') or 0):.1f}% · 🟡 Любое: {float(combo_no.get('continuation_rate') or 0):.1f}% · 📈 {float(combo_no.get('average_return') or 0):+.1f}%",
+            "",
+        ])
+    else:
+        lines.extend([
+            "🧪 Candidate Strategies v2",
+            "Пока нет 24ч результатов сигналов, записанных после обновления.",
+            "",
+        ])
+    lines.extend([
         "📊 Разница теневой модели",
         f"• Сильное: {float(report.get('strong_delta') or 0):+.1f} п.п.",
         f"• Любое: {float(report.get('continuation_delta') or 0):+.1f} п.п.",
@@ -374,7 +458,7 @@ def format_simulator_report(report: dict[str, Any]) -> str:
         f"• Любое: {float(report.get('recal_continuation_delta') or 0):+.1f} п.п.",
         f"• Средний результат: {float(report.get('recal_return_delta') or 0):+.1f} п.п.",
         f"• Совпало в топе: {int(report.get('recal_overlap') or 0)}/{top_count}",
-    ]
+    ])
 
     if not report.get("ready"):
         lines.extend([

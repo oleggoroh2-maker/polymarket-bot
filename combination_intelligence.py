@@ -249,6 +249,61 @@ def get_combination_intelligence_report(
     }
 
 
+
+def _alert_dimensions(alert: dict[str, Any]) -> dict[str, str | None]:
+    ml = _probability(alert.get("ml_probability"))
+    sim_raw = alert.get("similarity_average")
+    sim = None if sim_raw is None else _number(sim_raw)
+    if sim is not None and 0 <= sim <= 1:
+        sim *= 100.0
+    alert_type = str(alert.get("alert_type") or "").upper()
+    category = str(alert.get("category") or "OTHER").upper() or "OTHER"
+    return {
+        "score": _bucket(_number(alert.get("score")), BUCKETS["score"]),
+        "ai_quality": _bucket(_number(alert.get("ai_quality")), BUCKETS["ai_quality"]),
+        "ai_risk": _bucket(_number(alert.get("ai_risk")), BUCKETS["ai_risk"]),
+        "ml": _bucket(ml, BUCKETS["ml"]),
+        "liquidity": _bucket(max(0.0, _number(alert.get("liquidity"))), BUCKETS["liquidity"]),
+        "price_bucket": entry_price_bucket(alert.get("price") if alert.get("price") is not None else alert.get("entry_price")),
+        "liquidity_change": _bucket(None if alert.get("liquidity_change_percent") is None else _number(alert.get("liquidity_change_percent")), BUCKETS["liquidity_change"]),
+        "volume_change": _bucket(None if alert.get("volume_change_percent") is None else _number(alert.get("volume_change_percent")), BUCKETS["volume_change"]),
+        "similarity": _bucket(sim, BUCKETS["similarity"]),
+        "category": category,
+        "direction": "DIP" if "DIP" in alert_type else ("OPPORTUNITY" if "OPPORTUNITY" in alert_type else "PUMP"),
+    }
+
+
+def calculate_combination_adjustment(alert: dict[str, Any]) -> dict[str, Any]:
+    """Historical combination bonus for a *new* signal; diagnostic/shadow only.
+
+    It is called when the signal is recorded, so later 24h outcome cannot leak into
+    the candidate score. Only combinations with a substantial historical sample
+    are allowed to contribute.
+    """
+    report = get_combination_intelligence_report()
+    dims = _alert_dimensions(alert)
+    min_samples = int(getattr(config, "COMBINATION_CANDIDATE_MIN_SAMPLES", 100))
+    max_bonus = float(getattr(config, "COMBINATION_CANDIDATE_MAX_BONUS", 8.0))
+    matches = []
+    for item in report.get("best") or []:
+        if int(item.get("samples") or 0) < min_samples:
+            continue
+        parts = item.get("parts") or []
+        if all(dims.get(str(key)) == str(value) for key, value in parts):
+            edge = max(0.0, float(item.get("edge") or 0.0))
+            if edge > 0:
+                matches.append({**item, "candidate_edge": edge})
+    matches.sort(key=lambda x: (x["candidate_edge"], x.get("samples", 0)), reverse=True)
+    # Use the strongest verified context, not a sum of overlapping combinations.
+    raw = matches[0]["candidate_edge"] * 0.25 if matches else 0.0
+    bonus = max(0.0, min(max_bonus, raw))
+    return {
+        "adjustment": round(bonus, 3),
+        "matched": matches[:3],
+        "dimensions": dims,
+        "shadow_mode": True,
+    }
+
 def _stars(samples: int) -> str:
     if samples >= 300:
         n = 5

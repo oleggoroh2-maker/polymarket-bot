@@ -97,6 +97,7 @@ def ensure_confidence_schema() -> None:
                 signal_id TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL,
                 confidence REAL NOT NULL,
+                calibrated_confidence REAL,
                 tier TEXT NOT NULL,
                 components_json TEXT NOT NULL,
                 inputs_json TEXT NOT NULL
@@ -106,6 +107,9 @@ def ensure_confidence_schema() -> None:
             ON confidence_signals (created_at DESC);
             """
         )
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(confidence_signals)").fetchall()}
+        if "calibrated_confidence" not in columns:
+            connection.execute("ALTER TABLE confidence_signals ADD COLUMN calibrated_confidence REAL")
         connection.commit()
 
 
@@ -204,9 +208,65 @@ def enrich_with_confidence(alert: dict[str, Any]) -> dict[str, Any]:
         }
 
 
+def calculate_confidence_recalibration(raw_confidence: float, checkpoint_minutes: int | None = None) -> dict[str, Any]:
+    """Map raw Confidence to a historically calibrated shadow score.
+
+    The mapping is calculated only from outcomes already present when a new signal
+    is recorded, then frozen in the DB. This avoids using the signal's own future
+    24h result to calibrate itself.
+    """
+    ensure_confidence_schema()
+    checkpoint = int(checkpoint_minutes or getattr(config, "CONFIDENCE_CHECKPOINT_MINUTES", 1440))
+    limit = int(getattr(config, "CONFIDENCE_MAX_ROWS", 5000))
+    with closing(get_connection()) as connection:
+        rows = connection.execute(
+            """
+            SELECT c.confidence, o.status, o.directional_return_percent
+            FROM confidence_signals c
+            JOIN signal_outcomes o ON o.signal_id = c.signal_id
+            WHERE o.checkpoint_minutes = ? AND o.status IS NOT NULL
+            ORDER BY o.measured_at DESC LIMIT ?
+            """, (checkpoint, max(1, limit))
+        ).fetchall()
+    if not rows:
+        return {"calibrated_confidence": round(_clip(raw_confidence), 1), "samples": 0, "shadow_mode": True}
+    prepared = [(float(r[0]), str(r[1]).upper(), normalized_training_return(r[2])) for r in rows]
+    baseline_strong = sum(status == "SUCCESS" for _, status, _ in prepared) / len(prepared) * 100.0
+    baseline_return = sum(ret for _, _, ret in prepared) / len(prepared)
+    selected = []
+    label = None
+    for bucket_label, low, high in _BUCKETS:
+        if low <= raw_confidence < high:
+            label = bucket_label
+            selected = [(status, ret) for conf, status, ret in prepared if low <= conf < high]
+            break
+    if not selected:
+        return {"calibrated_confidence": round(_clip(raw_confidence), 1), "samples": 0, "bucket": label, "shadow_mode": True}
+    n = len(selected)
+    strong_rate = sum(status == "SUCCESS" for status, _ in selected) / n * 100.0
+    avg_return = sum(ret for _, ret in selected) / n
+    shrink_n = float(getattr(config, "CONFIDENCE_RECALIBRATION_SHRINKAGE_SAMPLES", 150))
+    reliability = n / (n + max(1.0, shrink_n))
+    raw_edge = 1.6 * (strong_rate - baseline_strong) + 0.35 * (avg_return - baseline_return)
+    max_adjust = float(getattr(config, "CONFIDENCE_RECALIBRATION_MAX_ADJUSTMENT", 25.0))
+    adjustment = max(-max_adjust, min(max_adjust, raw_edge * reliability))
+    # Center at 50: calibrated score expresses historical quality, not raw magnitude.
+    calibrated = _clip(50.0 + adjustment)
+    return {
+        "calibrated_confidence": round(calibrated, 1),
+        "adjustment": round(adjustment, 2),
+        "samples": n,
+        "bucket": label,
+        "strong_rate": strong_rate,
+        "average_return": avg_return,
+        "shadow_mode": True,
+    }
+
+
 def record_confidence_signal(signal_id: str, alert: dict[str, Any]) -> None:
     ensure_confidence_schema()
     result = calculate_confidence(alert)
+    recalibration = calculate_confidence_recalibration(float(result["signal_confidence"]))
     inputs = {
         key: alert.get(key)
         for key in (
@@ -221,14 +281,15 @@ def record_confidence_signal(signal_id: str, alert: dict[str, Any]) -> None:
         connection.execute(
             """
             INSERT OR REPLACE INTO confidence_signals (
-                signal_id, created_at, confidence, tier,
+                signal_id, created_at, confidence, calibrated_confidence, tier,
                 components_json, inputs_json
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(signal_id),
                 _now_iso(),
                 float(result["signal_confidence"]),
+                float(recalibration["calibrated_confidence"]),
                 str(result["confidence_tier"]),
                 json.dumps(result["confidence_components"], ensure_ascii=False),
                 json.dumps(inputs, ensure_ascii=False),
@@ -264,7 +325,7 @@ def get_confidence_report(
     with closing(get_connection()) as connection:
         rows = connection.execute(
             """
-            SELECT c.confidence, c.tier, o.status,
+            SELECT c.confidence, c.calibrated_confidence, c.tier, o.status,
                    o.directional_return_percent
             FROM confidence_signals c
             JOIN signal_outcomes o ON o.signal_id = c.signal_id
@@ -278,10 +339,11 @@ def get_confidence_report(
     prepared = [
         {
             "confidence": float(row[0]),
-            "tier": str(row[1]),
-            "status": str(row[2]).upper(),
-            "return": normalized_training_return(row[3]),
-            "raw_return": float(row[3] or 0.0),
+            "calibrated_confidence": None if row[1] is None else float(row[1]),
+            "tier": str(row[2]),
+            "status": str(row[3]).upper(),
+            "return": normalized_training_return(row[4]),
+            "raw_return": float(row[4] or 0.0),
         }
         for row in rows
     ]
@@ -301,8 +363,25 @@ def get_confidence_report(
             "average_return": average,
         })
 
+    calibrated_prepared = [row for row in prepared if row.get("calibrated_confidence") is not None]
+    calibrated_buckets = []
+    for label, low, high in _BUCKETS:
+        selected = [row for row in calibrated_prepared if low <= row["calibrated_confidence"] < high]
+        total = len(selected)
+        strong = sum(row["status"] == "SUCCESS" for row in selected)
+        continuation = sum(row["status"] in {"SUCCESS", "PARTIAL"} for row in selected)
+        average = sum(row["return"] for row in selected) / total if total else None
+        calibrated_buckets.append({
+            "label": label, "total": total,
+            "strong_rate": strong / total * 100.0 if total else None,
+            "continuation_rate": continuation / total * 100.0 if total else None,
+            "average_return": average,
+        })
+
     return {
         "checkpoint_minutes": checkpoint,
+        "calibrated_evaluated": len(calibrated_prepared),
+        "calibrated_buckets": calibrated_buckets,
         "evaluated": len(prepared),
         "minimum": int(getattr(config, "CONFIDENCE_MIN_EVALUATED", 30)),
         "ready": len(prepared) >= int(getattr(config, "CONFIDENCE_MIN_EVALUATED", 30)),
@@ -345,8 +424,24 @@ def format_confidence_report(report: dict[str, Any]) -> str:
             f"  Strong: {strong:.1f}% · Любое: {continuation:.1f}% · Норм.: {average_text}",
         ])
 
+    calibrated_n = int(report.get("calibrated_evaluated") or 0)
+    lines.extend(["", "🧭 Confidence Recalibration · future-only"] )
+    if not calibrated_n:
+        lines.append("Пока нет 24ч результатов сигналов, записанных после обновления.")
+    else:
+        lines.append(f"Проверено после обновления: {calibrated_n}")
+        for bucket in report.get("calibrated_buckets") or []:
+            total = int(bucket.get("total") or 0)
+            if not total:
+                continue
+            avg = bucket.get("average_return")
+            avg_text = f"{float(avg):+.1f}%" if avg is not None else "—"
+            lines.append(
+                f"• Cal {bucket['label']} (n={total}): Strong {float(bucket.get('strong_rate') or 0):.1f}% · "
+                f"Любое {float(bucket.get('continuation_rate') or 0):.1f}% · Норм. {avg_text}"
+            )
     lines.extend([
         "",
-        "Цель Shadow Mode — проверить, растёт ли качество вместе с Confidence.",
+        "Raw Confidence сохранён для аудита. Recalibrated Confidence пока не влияет на алерты.",
     ])
     return "\n".join(lines)
