@@ -417,6 +417,28 @@ def check_signals(
 
         new_alerts.append(prepared_alert)
 
+    # Quality Live Mode v1.
+    # Filtering happens AFTER record_alert(), so rejected live alerts still remain
+    # in AI Memory / Shadow analytics and can be compared against sent alerts.
+    if bool(getattr(config, "QUALITY_LIVE_MODE", False)):
+        score_min = float(getattr(config, "QUALITY_LIVE_SCORE_MIN", 60))
+        score_max = float(getattr(config, "QUALITY_LIVE_SCORE_MAX", 74))
+        block_opportunity = bool(getattr(config, "QUALITY_LIVE_BLOCK_OPPORTUNITY", True))
+        quality_alerts: list[dict[str, Any]] = []
+        for item in new_alerts:
+            alert_type = str(item.get("alert_type") or "").upper()
+            if block_opportunity and "OPPORTUNITY" in alert_type:
+                item["quality_live_block_reason"] = "OPPORTUNITY"
+                continue
+            base_score = float(item.get("score") or 0.0)
+            if not (score_min <= base_score <= score_max):
+                item["quality_live_block_reason"] = "SCORE_BUCKET"
+                continue
+            item["quality_live_passed"] = True
+            item["quality_live_version"] = "v1"
+            quality_alerts.append(item)
+        new_alerts = quality_alerts
+
     priority = {
         "💎 VALUE OPPORTUNITY": 3,
         "🔴 STRONG DIP": 2,

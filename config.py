@@ -14,6 +14,13 @@ CHAT_ID = int(CHAT_ID_RAW) if CHAT_ID_RAW else None
 SCAN_INTERVAL = 300
 AUTO_ALERTS = True
 
+# Quality Live Mode v1 — меньше алертов, приоритет Strong continuation.
+# ВАЖНО: AI Memory продолжает записывать все обнаруженные сигналы до live-фильтра.
+QUALITY_LIVE_MODE = True
+QUALITY_LIVE_SCORE_MIN = 60
+QUALITY_LIVE_SCORE_MAX = 74
+QUALITY_LIVE_BLOCK_OPPORTUNITY = True
+
 STRONG_DIP_PERCENT = -30
 STRONG_PUMP_PERCENT = 30
 MIN_ABSOLUTE_MOVE = 0.02

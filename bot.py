@@ -1364,7 +1364,12 @@ async def auto_scan_job(
             signals,
         )
 
-        alerts.extend(opportunities)
+        # Keep Opportunity detection/AI Memory running for clean comparison,
+        # but Quality Live Mode v1 does not send OPPORTUNITY alerts.
+        if not bool(getattr(config, "QUALITY_LIVE_MODE", False)) or not bool(
+            getattr(config, "QUALITY_LIVE_BLOCK_OPPORTUNITY", True)
+        ):
+            alerts.extend(opportunities)
 
     except Exception:
         logger.exception(
