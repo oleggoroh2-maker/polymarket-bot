@@ -77,6 +77,7 @@ from calibration_audit import (
     format_calibration_audit_report,
     get_calibration_audit_report,
 )
+from quality_live_analytics import get_quality_live_report, format_quality_live_report, mark_quality_sent
 from score_recalibration import (
     format_score_recalibration_report,
     get_score_recalibration_report,
@@ -122,7 +123,7 @@ keyboard = ReplyKeyboardMarkup(
         ["🧪 AI Simulator", "🎯 Confidence"],
         ["💰 Price Intelligence", "📊 Feature Intelligence"],
         ["🧩 Combinations", "🎚 Score Audit"],
-        ["🧭 Score Recalibration"],
+        ["🧭 Score Recalibration", "🟢 Quality Live"],
         ["⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
@@ -1463,6 +1464,7 @@ async def auto_scan_job(
                     reply_markup=reply_markup,
                     disable_web_page_preview=True,
                 )
+                await asyncio.to_thread(mark_quality_sent, alert.get("ai_signal_id"))
 
             except Forbidden:
                 logger.warning(
@@ -1628,6 +1630,10 @@ async def handle_buttons(
 
     elif text == "🧭 Score Recalibration":
         await score_recalibration_action(update, context)
+
+    elif text == "🟢 Quality Live":
+        report = await asyncio.to_thread(get_quality_live_report)
+        await update.message.reply_text(format_quality_live_report(report), reply_markup=keyboard)
 
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)

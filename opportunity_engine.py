@@ -3,6 +3,7 @@ from typing import Any, Iterable
 import config
 
 from ai_engine import record_alert
+from quality_live_analytics import record_quality_decision
 from calibration_engine import calibrate_signal
 from similarity_engine import analyze_similarity
 from market_group_engine import (
@@ -207,6 +208,8 @@ def check_opportunities(
             alert["ai_signal_id"] = record_alert(alert)
         except Exception:
             alert["ai_signal_id"] = None
+        if bool(getattr(config, "QUALITY_LIVE_MODE", False)) and bool(getattr(config, "QUALITY_LIVE_BLOCK_OPPORTUNITY", True)):
+            record_quality_decision(alert, False, "OPPORTUNITY")
         result.append(alert)
 
     return result
