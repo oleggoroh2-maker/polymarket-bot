@@ -12,6 +12,7 @@ from market_group_engine import (
 from alert_formatter import format_calibrated_alert
 from database import save_alert, save_group_alert
 from quality_live_analytics import record_quality_decision
+from quality_live_v2_shadow import record_shadow_decision
 from smart_cooldown import check_smart_cooldown, register_smart_cooldown
 from confidence_engine import enrich_with_confidence
 from price_intelligence import enrich_with_price_intelligence
@@ -417,6 +418,13 @@ def check_signals(
             prepared_alert["ai_signal_id"] = None
 
         new_alerts.append(prepared_alert)
+
+        # Quality Live v2 is shadow-only: record the decision but never change
+        # the real alert stream. Recording starts only after this deployment.
+        try:
+            record_shadow_decision(prepared_alert)
+        except Exception:
+            pass
 
     # Quality Live Mode v1.
     # Filtering happens AFTER record_alert(), so rejected live alerts still remain

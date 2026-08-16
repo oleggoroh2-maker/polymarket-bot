@@ -8,3 +8,9 @@
 - Добавлены краткий вывод AI и уровень уверенности.
 - Логика расчёта Score, фильтры, ML и частота уведомлений не изменены.
 - Добавлены настройки `AI_EXPLAIN_ENABLED` и `AI_EXPLAIN_MAX_FACTORS`.
+
+## AI Calibration Engine v1.0
+- Added historical calibration and confidence score.
+- Added WATCH / GOOD / PREMIUM tiers.
+- Added per-user signal quality filter.
+- Unified compact STRONG and AI Opportunity alert formatting.

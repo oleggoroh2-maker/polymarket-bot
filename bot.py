@@ -78,6 +78,7 @@ from calibration_audit import (
     get_calibration_audit_report,
 )
 from quality_live_analytics import get_quality_live_report, format_quality_live_report, mark_quality_sent
+from quality_live_v2_shadow import get_report as get_quality_v2_report, format_report as format_quality_v2_report
 from score_recalibration import (
     format_score_recalibration_report,
     get_score_recalibration_report,
@@ -1634,6 +1635,8 @@ async def handle_buttons(
     elif text == "🟢 Quality Live":
         report = await asyncio.to_thread(get_quality_live_report)
         await update.message.reply_text(format_quality_live_report(report), reply_markup=keyboard)
+        v2_report = await asyncio.to_thread(get_quality_v2_report)
+        await update.message.reply_text(format_quality_v2_report(v2_report), reply_markup=keyboard)
 
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
