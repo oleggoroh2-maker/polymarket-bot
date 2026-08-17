@@ -13,6 +13,7 @@ from alert_formatter import format_calibrated_alert
 from database import save_alert, save_group_alert
 from quality_live_analytics import record_quality_decision
 from quality_live_v2_shadow import record_shadow_decision
+from quality_engine_v3 import evaluate_quality_v3
 from smart_cooldown import check_smart_cooldown, register_smart_cooldown
 from confidence_engine import enrich_with_confidence
 from price_intelligence import enrich_with_price_intelligence
@@ -426,27 +427,20 @@ def check_signals(
         except Exception:
             pass
 
-    # Quality Live Mode v1.
-    # Filtering happens AFTER record_alert(), so rejected live alerts still remain
-    # in AI Memory / Shadow analytics and can be compared against sent alerts.
-    if bool(getattr(config, "QUALITY_LIVE_MODE", False)):
-        score_min = float(getattr(config, "QUALITY_LIVE_SCORE_MIN", 60))
-        score_max = float(getattr(config, "QUALITY_LIVE_SCORE_MAX", 74))
-        block_opportunity = bool(getattr(config, "QUALITY_LIVE_BLOCK_OPPORTUNITY", True))
+    # Quality Engine v3 — LIVE high-precision gate.
+    # It runs AFTER record_alert(), therefore AI Memory keeps both accepted and
+    # rejected candidates. This changes only Telegram delivery, not learning.
+    if bool(getattr(config, "QUALITY_ENGINE_V3_MODE", True)):
         quality_alerts: list[dict[str, Any]] = []
         for item in new_alerts:
-            alert_type = str(item.get("alert_type") or "").upper()
-            if block_opportunity and "OPPORTUNITY" in alert_type:
-                item["quality_live_block_reason"] = "OPPORTUNITY"
-                record_quality_decision(item, False, "OPPORTUNITY")
-                continue
-            base_score = float(item.get("score") or 0.0)
-            if not (score_min <= base_score <= score_max):
-                item["quality_live_block_reason"] = "SCORE_BUCKET"
-                record_quality_decision(item, False, "SCORE_BUCKET")
+            passed, reason, confirmations = evaluate_quality_v3(item)
+            item["quality_v3_confirmations"] = confirmations
+            if not passed:
+                item["quality_live_block_reason"] = reason
+                record_quality_decision(item, False, reason)
                 continue
             item["quality_live_passed"] = True
-            item["quality_live_version"] = "v1"
+            item["quality_live_version"] = "v3"
             record_quality_decision(item, True)
             quality_alerts.append(item)
         new_alerts = quality_alerts

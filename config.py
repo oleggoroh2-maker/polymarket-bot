@@ -16,6 +16,9 @@ AUTO_ALERTS = True
 
 # Quality Live Mode v1 — меньше алертов, приоритет Strong continuation.
 # ВАЖНО: AI Memory продолжает записывать все обнаруженные сигналы до live-фильтра.
+# Quality Engine v3: live high-precision delivery gate.
+QUALITY_ENGINE_V3_MODE = True
+
 QUALITY_LIVE_MODE = True
 QUALITY_LIVE_SCORE_MIN = 60
 QUALITY_LIVE_SCORE_MAX = 74
