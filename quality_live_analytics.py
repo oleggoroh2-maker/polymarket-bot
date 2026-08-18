@@ -24,15 +24,19 @@ def ensure_quality_live_schema() -> None:
             reason TEXT,
             score REAL,
             alert_type TEXT,
-            sent_at TEXT
+            sent_at TEXT,
+            engine_version TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_quality_live_events_created
         ON quality_live_events(created_at);
         """)
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(quality_live_events)").fetchall()}
+        if "engine_version" not in columns:
+            connection.execute("ALTER TABLE quality_live_events ADD COLUMN engine_version TEXT")
         connection.commit()
 
 
-def record_quality_decision(alert: dict[str, Any], passed: bool, reason: str | None = None) -> None:
+def record_quality_decision(alert: dict[str, Any], passed: bool, reason: str | None = None, engine_version: str | None = None) -> None:
     signal_id = str(alert.get("ai_signal_id") or "")
     if not signal_id:
         return
@@ -40,10 +44,10 @@ def record_quality_decision(alert: dict[str, Any], passed: bool, reason: str | N
     with closing(get_connection()) as connection:
         connection.execute(
             """INSERT OR REPLACE INTO quality_live_events
-               (signal_id, created_at, decision, reason, score, alert_type, sent_at)
-               VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT sent_at FROM quality_live_events WHERE signal_id=?), NULL))""",
+               (signal_id, created_at, decision, reason, score, alert_type, sent_at, engine_version)
+               VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT sent_at FROM quality_live_events WHERE signal_id=?), NULL), ?)""",
             (signal_id, _now(), "ELIGIBLE" if passed else "FILTERED", reason,
-             float(alert.get("score") or 0), str(alert.get("alert_type") or ""), signal_id),
+             float(alert.get("score") or 0), str(alert.get("alert_type") or ""), signal_id, engine_version),
         )
         connection.commit()
 

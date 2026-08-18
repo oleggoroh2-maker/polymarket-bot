@@ -437,11 +437,11 @@ def check_signals(
             item["quality_v3_confirmations"] = confirmations
             if not passed:
                 item["quality_live_block_reason"] = reason
-                record_quality_decision(item, False, reason)
+                record_quality_decision(item, False, reason, engine_version="v3")
                 continue
             item["quality_live_passed"] = True
             item["quality_live_version"] = "v3"
-            record_quality_decision(item, True)
+            record_quality_decision(item, True, engine_version="v3")
             quality_alerts.append(item)
         new_alerts = quality_alerts
 
