@@ -174,6 +174,9 @@ def format_calibrated_alert(
     similarity_best_title = alert.get("similarity_best_title")
     similarity_best_return = _optional_num(alert.get("similarity_best_return"))
     signal_confidence = _optional_num(alert.get("signal_confidence"))
+    final_signal_score = _optional_num(alert.get("final_signal_score"))
+    final_signal_label = escape(str(alert.get("final_signal_label") or ""))
+    final_signal_components = alert.get("final_signal_components") or []
     confidence_tier = escape(str(alert.get("confidence_label") or alert.get("confidence_tier") or ""))
     confidence_components = alert.get("confidence_components") or []
     timeframe = escape(str(alert.get("timeframe") or "—"))
@@ -193,6 +196,9 @@ def format_calibrated_alert(
         price_line += f"  (<b>{_signed(change)}</b>)"
     header.append(price_line)
     header.append(f"⏱ {timeframe}  |  💧 {_money(liquidity)}")
+    if final_signal_score is not None:
+        suffix = f" · {final_signal_label}" if final_signal_label else ""
+        header.append(f"🔥 Final Signal: <b>{final_signal_score:.0f}/100</b>{suffix}")
     if signal_confidence is not None:
         suffix = f" · {confidence_tier}" if confidence_tier else ""
         header.append(f"🎯 Confidence: <b>{signal_confidence:.0f}/100</b>{suffix}")
@@ -231,6 +237,19 @@ def format_calibrated_alert(
         f"AI Risk: {risk}/100 ({_risk_label(risk)})",
         f"ML: {ml * 100:.1f}%" if ml is not None else "ML: накопление данных",
     ]
+
+    if final_signal_score is not None:
+        details.extend([
+            "",
+            "<b>🔥 FINAL SIGNAL ENGINE v1</b>",
+            f"Final Signal: {final_signal_score:.1f}/100",
+            f"Уровень: {final_signal_label or '—'}",
+            "Режим: live scoring — Quality v3 остаётся фильтром отправки",
+        ])
+        for component in [item for item in final_signal_components if isinstance(item, dict)][:6]:
+            points = _num(component.get("points"))
+            icon = "🟢" if points > 0 else "🔴" if points < 0 else "⚪"
+            details.append(f"{icon} {escape(str(component.get('label') or component.get('key') or 'Фактор'))}: {points:+.1f}")
 
     if signal_confidence is not None:
         details.extend([

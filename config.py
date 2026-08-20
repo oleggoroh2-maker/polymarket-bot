@@ -19,6 +19,10 @@ AUTO_ALERTS = True
 # Quality Engine v3: live high-precision delivery gate.
 QUALITY_ENGINE_V3_MODE = True
 
+# Final Signal Engine v1 — unified live score. It enriches/ranks alerts but
+# does not block delivery; Quality Engine v3 remains the live gate.
+FINAL_SIGNAL_ENGINE_MODE = True
+
 QUALITY_LIVE_MODE = True
 QUALITY_LIVE_SCORE_MIN = 60
 QUALITY_LIVE_SCORE_MAX = 74

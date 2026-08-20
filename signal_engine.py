@@ -17,6 +17,7 @@ from quality_engine_v3 import evaluate_quality_v3
 from smart_cooldown import check_smart_cooldown, register_smart_cooldown
 from confidence_engine import enrich_with_confidence
 from price_intelligence import enrich_with_price_intelligence
+from final_signal_engine import enrich_with_final_signal
 
 
 # ---------------- SETTINGS ----------------
@@ -388,6 +389,8 @@ def check_signals(
             prepared_alert.update(calibrate_signal(prepared_alert))
             prepared_alert = enrich_with_price_intelligence(prepared_alert)
             prepared_alert = enrich_with_confidence(prepared_alert)
+            if bool(getattr(config, "FINAL_SIGNAL_ENGINE_MODE", True)):
+                prepared_alert = enrich_with_final_signal(prepared_alert)
             candidates.append(prepared_alert)
 
     # Markets belonging to one Polymarket event are treated as one family.
