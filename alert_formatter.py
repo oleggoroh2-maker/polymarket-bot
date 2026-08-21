@@ -177,6 +177,11 @@ def format_calibrated_alert(
     final_signal_score = _optional_num(alert.get("final_signal_score"))
     final_signal_label = escape(str(alert.get("final_signal_label") or ""))
     final_signal_components = alert.get("final_signal_components") or []
+    ev_estimate = _optional_num(alert.get("ev_estimate_percent"))
+    ev_label = escape(str(alert.get("ev_label") or ""))
+    risk_score_v1 = _optional_num(alert.get("risk_score"))
+    risk_label_v1 = escape(str(alert.get("risk_label") or ""))
+    ev_probability = _optional_num(alert.get("ev_continuation_probability"))
     confidence_tier = escape(str(alert.get("confidence_label") or alert.get("confidence_tier") or ""))
     confidence_components = alert.get("confidence_components") or []
     timeframe = escape(str(alert.get("timeframe") or "—"))
@@ -199,6 +204,8 @@ def format_calibrated_alert(
     if final_signal_score is not None:
         suffix = f" · {final_signal_label}" if final_signal_label else ""
         header.append(f"🔥 Final Signal: <b>{final_signal_score:.0f}/100</b>{suffix}")
+    if ev_estimate is not None and risk_score_v1 is not None:
+        header.append(f"💰 EV: <b>{ev_estimate:+.1f}%</b> · {ev_label}  |  🛡 Risk: <b>{risk_score_v1:.0f}/100</b> · {risk_label_v1}")
     if signal_confidence is not None:
         suffix = f" · {confidence_tier}" if confidence_tier else ""
         header.append(f"🎯 Confidence: <b>{signal_confidence:.0f}/100</b>{suffix}")
@@ -250,6 +257,16 @@ def format_calibrated_alert(
             points = _num(component.get("points"))
             icon = "🟢" if points > 0 else "🔴" if points < 0 else "⚪"
             details.append(f"{icon} {escape(str(component.get('label') or component.get('key') or 'Фактор'))}: {points:+.1f}")
+
+    if ev_estimate is not None and risk_score_v1 is not None:
+        details.extend([
+            "",
+            "<b>💰 EXPECTED VALUE + RISK v1</b>",
+            f"EV: {ev_estimate:+.1f}% · {ev_label}",
+            f"Risk: {risk_score_v1:.1f}/100 · {risk_label_v1}",
+            f"Оценка продолжения: {ev_probability:.1f}%" if ev_probability is not None else "Оценка продолжения: —",
+            f"Решение: {escape(str(alert.get('ev_risk_reason') or '—'))}",
+        ])
 
     if signal_confidence is not None:
         details.extend([

@@ -23,6 +23,11 @@ QUALITY_ENGINE_V3_MODE = True
 # does not block delivery; Quality Engine v3 remains the live gate.
 FINAL_SIGNAL_ENGINE_MODE = True
 
+# Expected Value + Risk Engine v1 — live precision gate after Quality v3.
+# AI Memory still records all candidates before this gate; categories stay open.
+EV_RISK_ENGINE_MODE = True
+EV_RISK_LIVE_GATE = True
+
 QUALITY_LIVE_MODE = True
 QUALITY_LIVE_SCORE_MIN = 60
 QUALITY_LIVE_SCORE_MAX = 74

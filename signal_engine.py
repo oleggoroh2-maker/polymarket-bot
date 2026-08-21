@@ -18,6 +18,7 @@ from smart_cooldown import check_smart_cooldown, register_smart_cooldown
 from confidence_engine import enrich_with_confidence
 from price_intelligence import enrich_with_price_intelligence
 from final_signal_engine import enrich_with_final_signal
+from ev_risk_engine import enrich_with_ev_risk
 
 
 # ---------------- SETTINGS ----------------
@@ -391,6 +392,8 @@ def check_signals(
             prepared_alert = enrich_with_confidence(prepared_alert)
             if bool(getattr(config, "FINAL_SIGNAL_ENGINE_MODE", True)):
                 prepared_alert = enrich_with_final_signal(prepared_alert)
+            if bool(getattr(config, "EV_RISK_ENGINE_MODE", True)):
+                prepared_alert = enrich_with_ev_risk(prepared_alert)
             candidates.append(prepared_alert)
 
     # Markets belonging to one Polymarket event are treated as one family.
@@ -447,6 +450,10 @@ def check_signals(
             record_quality_decision(item, True, engine_version="v3")
             quality_alerts.append(item)
         new_alerts = quality_alerts
+
+    # EV + Risk Engine v1 — final live precision gate.
+    if bool(getattr(config, "EV_RISK_LIVE_GATE", True)):
+        new_alerts = [item for item in new_alerts if bool(item.get("ev_risk_passed"))]
 
     priority = {
         "💎 VALUE OPPORTUNITY": 3,
