@@ -79,6 +79,7 @@ from calibration_audit import (
 )
 from quality_live_analytics import get_quality_live_report, format_quality_live_report, mark_quality_sent
 from live_performance_tracker import get_live_performance_report, format_live_performance_report
+from paper_trading import record_delivered_trade, get_paper_report, format_paper_report
 from quality_live_v2_shadow import get_report as get_quality_v2_report, format_report as format_quality_v2_report
 from score_recalibration import (
     format_score_recalibration_report,
@@ -126,6 +127,7 @@ keyboard = ReplyKeyboardMarkup(
         ["💰 Price Intelligence", "📊 Feature Intelligence"],
         ["🧩 Combinations", "🎚 Score Audit"],
         ["🧭 Score Recalibration", "🟢 Quality Live"],
+        ["💼 Paper Trading"],
         ["⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
@@ -1465,6 +1467,7 @@ async def auto_scan_job(
                     disable_web_page_preview=True,
                 )
                 await asyncio.to_thread(mark_quality_sent, alert.get("ai_signal_id"))
+                await asyncio.to_thread(record_delivered_trade, alert)
 
             except Forbidden:
                 logger.warning(
@@ -1638,6 +1641,10 @@ async def handle_buttons(
         await update.message.reply_text(format_live_performance_report(live_report), reply_markup=keyboard)
         v2_report = await asyncio.to_thread(get_quality_v2_report)
         await update.message.reply_text(format_quality_v2_report(v2_report), reply_markup=keyboard)
+
+    elif text == "💼 Paper Trading":
+        report = await asyncio.to_thread(get_paper_report)
+        await update.message.reply_text(format_paper_report(report), reply_markup=keyboard)
 
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
