@@ -79,7 +79,10 @@ from calibration_audit import (
 )
 from quality_live_analytics import get_quality_live_report, format_quality_live_report, mark_quality_sent
 from live_performance_tracker import get_live_performance_report, format_live_performance_report
-from paper_trading import record_delivered_trade, get_paper_report, format_paper_report
+from paper_trading import (
+    record_delivered_trade, get_paper_report, format_paper_report,
+    get_paper_audit, format_paper_audit,
+)
 from quality_live_v2_shadow import get_report as get_quality_v2_report, format_report as format_quality_v2_report
 from score_recalibration import (
     format_score_recalibration_report,
@@ -127,7 +130,7 @@ keyboard = ReplyKeyboardMarkup(
         ["💰 Price Intelligence", "📊 Feature Intelligence"],
         ["🧩 Combinations", "🎚 Score Audit"],
         ["🧭 Score Recalibration", "🟢 Quality Live"],
-        ["💼 Paper Trading"],
+        ["💼 Paper Trading", "🔎 Paper Audit"],
         ["⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
@@ -1645,6 +1648,10 @@ async def handle_buttons(
     elif text == "💼 Paper Trading":
         report = await asyncio.to_thread(get_paper_report)
         await update.message.reply_text(format_paper_report(report), reply_markup=keyboard)
+
+    elif text == "🔎 Paper Audit":
+        items = await asyncio.to_thread(get_paper_audit, 10, 1440)
+        await update.message.reply_text(format_paper_audit(items), reply_markup=keyboard)
 
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
