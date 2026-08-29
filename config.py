@@ -214,3 +214,9 @@ PAPER_TRADING_BANK_USD = 10000.0
 PAPER_TRADE_STAKE_USD = 100.0
 # Conservative synthetic round-trip friction used for Realistic PnL.
 PAPER_TRADING_COST_PERCENT = 1.0
+
+
+# Trade Intelligence / Risk Position Engine v1 — paper-only sizing, no live gate.
+TRADE_INTELLIGENCE_MODE = True
+PAPER_RISK_SIZING_MODE = True
+PAPER_POSITION_SIZES_USD = (25.0, 50.0, 75.0, 100.0, 150.0)

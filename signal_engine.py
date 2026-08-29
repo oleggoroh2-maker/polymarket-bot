@@ -19,6 +19,7 @@ from confidence_engine import enrich_with_confidence
 from price_intelligence import enrich_with_price_intelligence
 from final_signal_engine import enrich_with_final_signal
 from ev_risk_engine import enrich_with_ev_risk
+from trade_intelligence import enrich_with_trade_intelligence
 
 
 # ---------------- SETTINGS ----------------
@@ -394,6 +395,8 @@ def check_signals(
                 prepared_alert = enrich_with_final_signal(prepared_alert)
             if bool(getattr(config, "EV_RISK_ENGINE_MODE", True)):
                 prepared_alert = enrich_with_ev_risk(prepared_alert)
+            if bool(getattr(config, "TRADE_INTELLIGENCE_MODE", True)):
+                prepared_alert = enrich_with_trade_intelligence(prepared_alert)
             candidates.append(prepared_alert)
 
     # Markets belonging to one Polymarket event are treated as one family.
