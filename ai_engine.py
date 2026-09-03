@@ -19,7 +19,7 @@ from confidence_engine import record_confidence_signal
 
 logger = logging.getLogger(__name__)
 
-CHECKPOINTS_MINUTES = (30, 60, 360, 1440, 4320)
+CHECKPOINTS_MINUTES = (30, 60, 180, 360, 720, 1440, 4320)
 TRAINING_CHECKPOINT_MINUTES = 1440
 SUCCESS_MOVE_PERCENT = float(getattr(config, "AI_SUCCESS_MOVE_PERCENT", 20.0))
 MIN_TRAINING_SAMPLES = int(getattr(config, "AI_MIN_TRAINING_SAMPLES", 200))
