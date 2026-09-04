@@ -188,6 +188,104 @@ def get_paper_audit(limit:int=10, checkpoint:int=1440)->list[dict[str,Any]]:
                     "regime":r[7] or "LEGACY","exit_yes":r[8],"memory_return":r[9],"directional_return":r[10],"status":r[11],"measured_at":r[12],**m})
     return out
 
+def get_trade_v2_audit(limit:int=12)->list[dict[str,Any]]:
+    """Detailed future-only audit for Trade Intelligence v2.
+
+    TRADE rows use the frozen v2 stake. SKIP rows are evaluated hypothetically
+    with the same fixed $100 benchmark stake, so we can measure whether SKIP
+    actually avoided losses without changing any historical decision.
+    """
+    ensure_paper_schema(); cost=float(getattr(config,"PAPER_TRADING_COST_PERCENT",1.0))
+    benchmark=float(getattr(config,"PAPER_TRADE_STAKE_USD",100.0))
+    with closing(get_connection()) as c:
+        trades=c.execute("""SELECT signal_id,opened_at,entry_price,alert_type,trade_side,category,title,
+            COALESCE(market_regime,'LEGACY'),final_signal,ev_estimate,risk_score,risk_stake,
+            entry_quality,chase_risk,trade_v2_decision,trade_v2_skip_reasons,trade_v2_exit_minutes
+            FROM paper_trades WHERE trade_intelligence_version='v2'
+            ORDER BY opened_at DESC LIMIT ?""",(limit,)).fetchall()
+        out=[]
+        for r in trades:
+            outcomes={int(cp):(float(price),status) for cp,price,status in c.execute(
+                "SELECT checkpoint_minutes,price,status FROM signal_outcomes WHERE signal_id=? AND status IS NOT NULL",(r[0],)).fetchall()}
+            side=str(r[4] or _side(r[3])); decision=str(r[14] or '?')
+            stake=float(r[11] or 0) if decision=='TRADE' else benchmark
+            cps={}
+            for cp,label in CHECKPOINTS:
+                if cp in outcomes:
+                    price,status=outcomes[cp]; m=_trade_math(stake,float(r[2]),price,side,cost)
+                    cps[label]={"price":price,"status":status,**m}
+            chosen=int(r[16] or 360); chosen_label=next((label for cp,label in CHECKPOINTS if cp==chosen),f"{chosen}m")
+            try: reasons=json.loads(r[15] or '[]')
+            except Exception: reasons=[]
+            out.append({"signal_id":r[0],"opened_at":r[1],"entry_yes":float(r[2]),"alert_type":r[3],"side":side,
+                "category":r[5],"title":r[6],"regime":r[7],"final_signal":r[8],"ev":r[9],"risk":r[10],
+                "stake":stake,"actual_stake":float(r[11] or 0),"entry_quality":float(r[12] or 0),"chase":float(r[13] or 0),
+                "decision":decision,"skip_reasons":reasons,"exit_minutes":chosen,"exit_label":chosen_label,"checkpoints":cps})
+    return out
+
+
+def get_trade_v2_skip_report()->dict[str,Any]:
+    """Counterfactual $100 PnL of v2 SKIP decisions, by checkpoint and reason."""
+    ensure_paper_schema(); cost=float(getattr(config,"PAPER_TRADING_COST_PERCENT",1.0)); stake=float(getattr(config,"PAPER_TRADE_STAKE_USD",100.0))
+    with closing(get_connection()) as c:
+        total=int(c.execute("SELECT COUNT(*) FROM paper_trades WHERE trade_intelligence_version='v2' AND trade_v2_decision='SKIP'").fetchone()[0] or 0)
+        stats={}
+        for cp,label in CHECKPOINTS:
+            rows=c.execute("""SELECT p.entry_price,p.alert_type,p.trade_side,o.price,p.trade_v2_skip_reasons
+                FROM paper_trades p JOIN signal_outcomes o ON o.signal_id=p.signal_id
+                WHERE p.trade_intelligence_version='v2' AND p.trade_v2_decision='SKIP'
+                  AND o.checkpoint_minutes=? AND o.status IS NOT NULL""",(cp,)).fetchall()
+            pnls=[]
+            for entry,atype,side,exitp,_ in rows:
+                pnls.append(_trade_math(stake,float(entry),float(exitp),str(side or _side(atype)),cost)["net_pnl"])
+            gp=sum(x for x in pnls if x>0); gl=-sum(x for x in pnls if x<0); invested=stake*len(pnls)
+            stats[label]={"n":len(pnls),"pnl":sum(pnls),"roi":sum(pnls)/invested*100 if invested else None,
+                "win_rate":sum(x>0 for x in pnls)/len(pnls)*100 if pnls else None,
+                "profit_factor":gp/gl if gl>0 else (float('inf') if pnls and gp>0 else None)}
+        reason_rows=[]
+        rows=c.execute("""SELECT p.entry_price,p.alert_type,p.trade_side,o.price,p.trade_v2_skip_reasons
+            FROM paper_trades p JOIN signal_outcomes o ON o.signal_id=p.signal_id
+            WHERE p.trade_intelligence_version='v2' AND p.trade_v2_decision='SKIP'
+              AND o.checkpoint_minutes=1440 AND o.status IS NOT NULL""").fetchall()
+        acc={}
+        for entry,atype,side,exitp,raw in rows:
+            m=_trade_math(stake,float(entry),float(exitp),str(side or _side(atype)),cost)
+            try: reasons=json.loads(raw or '[]') or ['UNKNOWN']
+            except Exception: reasons=['UNKNOWN']
+            for reason in reasons:
+                a=acc.setdefault(str(reason),[0,0.0]); a[0]+=1; a[1]+=m['net_pnl']
+        for reason,(n,pnl) in sorted(acc.items(),key=lambda kv:kv[1][1]):
+            reason_rows.append((reason,n,pnl,pnl/(stake*n)*100 if n else None))
+    return {"total":total,"stake":stake,"checkpoints":stats,"reasons_24h":reason_rows}
+
+
+def format_trade_v2_audit(items:list[dict[str,Any]], skip_report:dict[str,Any]|None=None)->str:
+    lines=["🎯 Trade v2 Audit · TRADE + SKIP",""]
+    if skip_report:
+        lines.append(f"🛡 SKIP counterfactual · если бы входили по ${skip_report['stake']:.0f}")
+        for label in ("1ч","3ч","6ч","12ч","24ч"):
+            x=skip_report['checkpoints'][label]; pf='—' if x['profit_factor'] is None else ('∞' if x['profit_factor']==float('inf') else f"{x['profit_factor']:.2f}")
+            lines.append(f"• {label}: n={x['n']} · avoided {_money(-x['pnl'])} · hypot.PnL {_money(x['pnl'])} · ROI {_pct(x['roi'])} · PF {pf}")
+        if skip_report['reasons_24h']:
+            lines.append("• 24ч причины: "+" · ".join(f"{r} n={n} hypot.ROI {_pct(roi)}" for r,n,pnl,roi in skip_report['reasons_24h'][:4]))
+        lines.append("")
+    if not items:return "\n".join(lines+["Пока нет Trade v2 сигналов."])
+    for i,x in enumerate(items,1):
+        why=(",".join(x['skip_reasons']) if x['skip_reasons'] else '—')
+        lines += [f"{i}. {x['decision']} · {x['category']} · {x['side']} · {x['regime']}",str(x['title'])[:82],
+            f"Entry YES {x['entry_yes']*100:.2f}¢ · Q {x['entry_quality']:.0f} · Chase {x['chase']:.0f} · Final {float(x['final_signal'] or 0):.0f} · EV {float(x['ev'] or 0):+.1f}% · Risk {float(x['risk'] or 0):.0f}",
+            (f"Stake ${x['stake']:.0f} · Exit plan {x['exit_label']}" if x['decision']=='TRADE' else f"SKIP: {why} · hypot. ${x['stake']:.0f}" )]
+        cpbits=[]
+        for label in ("1ч","3ч","6ч","12ч","24ч"):
+            m=x['checkpoints'].get(label)
+            if m: cpbits.append(f"{label} {_money(m['net_pnl'])} ({m['roi']:+.1f}%)")
+        lines.append("PnL: "+(" · ".join(cpbits) if cpbits else "ждём checkpoint"))
+        if x['decision']=='TRADE':
+            m=x['checkpoints'].get(x['exit_label'])
+            lines.append("Exit actual: "+(f"{x['exit_label']} · {_money(m['net_pnl'])} · ROI {m['roi']:+.1f}%" if m else f"{x['exit_label']} · ждём"))
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
 def _money(v:float)->str:return f"{v:+,.2f}$"
 def _pct(v:Any)->str:return "—" if v is None else f"{float(v):.1f}%"
 def format_paper_report(r:dict[str,Any])->str:

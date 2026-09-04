@@ -81,7 +81,7 @@ from quality_live_analytics import get_quality_live_report, format_quality_live_
 from live_performance_tracker import get_live_performance_report, format_live_performance_report
 from paper_trading import (
     record_delivered_trade, get_paper_report, format_paper_report,
-    get_paper_audit, format_paper_audit,
+    get_paper_audit, format_paper_audit, get_trade_v2_audit, get_trade_v2_skip_report, format_trade_v2_audit,
 )
 from quality_live_v2_shadow import get_report as get_quality_v2_report, format_report as format_quality_v2_report
 from score_recalibration import (
@@ -131,6 +131,7 @@ keyboard = ReplyKeyboardMarkup(
         ["🧩 Combinations", "🎚 Score Audit"],
         ["🧭 Score Recalibration", "🟢 Quality Live"],
         ["💼 Paper Trading", "🔎 Paper Audit"],
+        ["🎯 Trade v2 Audit"],
         ["⚙️ Качество сигналов"],
         ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
@@ -1652,6 +1653,13 @@ async def handle_buttons(
     elif text == "🔎 Paper Audit":
         items = await asyncio.to_thread(get_paper_audit, 10, 1440)
         await update.message.reply_text(format_paper_audit(items), reply_markup=keyboard)
+
+    elif text == "🎯 Trade v2 Audit":
+        items = await asyncio.to_thread(get_trade_v2_audit, 8)
+        skip_report = await asyncio.to_thread(get_trade_v2_skip_report)
+        await update.message.reply_text(format_trade_v2_audit(items[:4], skip_report), reply_markup=keyboard)
+        if len(items) > 4:
+            await update.message.reply_text(format_trade_v2_audit(items[4:], None), reply_markup=keyboard)
 
     elif text == "⚙️ Качество сигналов":
         await quality_settings_action(update, context)
