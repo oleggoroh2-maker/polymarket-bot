@@ -209,6 +209,10 @@ def format_calibrated_alert(
     if signal_confidence is not None:
         suffix = f" · {confidence_tier}" if confidence_tier else ""
         header.append(f"🎯 Confidence: <b>{signal_confidence:.0f}/100</b>{suffix}")
+    news_status = str(alert.get("news_status") or "").strip()
+    if news_status and news_status not in ("UNKNOWN","DISABLED","ERROR"):
+        ns=float(alert.get("news_score") or 0); nd=escape(str(alert.get("news_direction") or "NEUTRAL")); src=int(alert.get("news_source_count") or 0); social=int(alert.get("social_mentions") or 0)
+        header.append(f"📰 News: <b>{escape(news_status)}</b> · {ns:.0f}/100 · dir {nd} · sources {src} · social {social}")
     header.append("")
 
     if change is not None:

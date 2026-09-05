@@ -82,6 +82,14 @@ def calculate_trade_intelligence(alert: dict[str, Any]) -> dict[str, Any]:
     if regime["regime"] == "MOMENTUM": q += 2
     elif regime["regime"] == "EVENT_SHOCK": q -= 16
     elif regime["regime"] == "CHAOS_MANIPULATION": q -= 1
+    # News/Social v1 is contextual and conservative: only strong contradictions
+    # or confirmed catalysts move entry quality materially. It remains Paper/Shadow.
+    news_status = str(alert.get("news_status") or "").upper()
+    news_score = _num(alert.get("news_score"))
+    if news_status == "CONTRADICTED": q -= 18
+    elif news_status == "CONFIRMED_NEWS" and news_score >= 35: q += 5
+    elif news_status == "RUMOR": q -= 4
+    elif news_status == "NO_CATALYST" and regime["regime"] == "CHAOS_MANIPULATION": q -= 3
     q = _clamp(q)
 
     reasons: list[str] = []
@@ -97,6 +105,8 @@ def calculate_trade_intelligence(alert: dict[str, Any]) -> dict[str, Any]:
         decision = "SKIP"; reasons.append("HIGH_RISK")
     if side_price > 0.97:
         decision = "SKIP"; reasons.append("POOR_PAYOFF_PRICE")
+    if news_status == "CONTRADICTED" and news_score >= 30:
+        decision = "SKIP"; reasons.append("NEWS_CONTRADICTED")
 
     if q >= 84 and chase <= 40 and base_risk <= 55: stake = 150.0
     elif q >= 74 and chase <= 55: stake = 100.0

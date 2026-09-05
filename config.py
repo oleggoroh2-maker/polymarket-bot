@@ -226,3 +226,16 @@ TRADE_V2_MODE = True
 TRADE_V2_MIN_ENTRY_QUALITY = 48.0
 TRADE_V2_EVENT_SHOCK_STRICT = True
 PAPER_EXIT_CHECKPOINTS_MINUTES = (60, 180, 360, 720, 1440)
+
+# News & Social Intelligence v1 — Shadow/Paper context for final delivered signals.
+# Google News RSS and Reddit need no key. X is optional and only used when a bearer token exists.
+NEWS_SOCIAL_INTELLIGENCE_MODE = True
+NEWS_HTTP_TIMEOUT_SECONDS = 4.0
+NEWS_CACHE_SECONDS = 900
+X_BEARER_TOKEN = (os.getenv("X_BEARER_TOKEN") or "").strip()
+
+# Dynamic Exit Engine v2 — Paper/Shadow only.
+DYNAMIC_EXIT_V2_MODE = True
+DYNAMIC_EXIT_TAKE_PROFIT_PERCENT = 4.0
+DYNAMIC_EXIT_STOP_LOSS_PERCENT = -4.0
+DYNAMIC_EXIT_MAX_HOLD_MINUTES = 360

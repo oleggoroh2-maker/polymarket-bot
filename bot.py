@@ -39,6 +39,8 @@ from opportunity_engine import check_opportunities, format_opportunity
 from memory_engine import get_recent_memory_audit
 from alert_formatter import format_calibrated_alert
 from market_structure import enrich_market_structure
+from news_social_intelligence import enrich_with_news_social
+from trade_intelligence import enrich_with_trade_intelligence
 from similarity_engine import analyze_similarity
 from cooldown_stats import (
     format_cooldown_dashboard,
@@ -1405,6 +1407,10 @@ async def auto_scan_job(
 
     for alert in alerts:
         alert = await asyncio.to_thread(enrich_market_structure, alert)
+        # External catalyst context is fetched only for final live candidates,
+        # keeping scanner/API load bounded. It is Shadow/Paper and never blocks Telegram.
+        alert = await asyncio.to_thread(enrich_with_news_social, alert)
+        alert = await asyncio.to_thread(enrich_with_trade_intelligence, alert)
         if alert.get("alert_type") == "AI_OPPORTUNITY":
             alert_text = format_opportunity(alert)
         else:
