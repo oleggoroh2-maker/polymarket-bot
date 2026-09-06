@@ -188,11 +188,20 @@ def format_calibrated_alert(
     momentum = escape(str(alert.get("momentum") or "—"))
     title = escape(_short_title(alert.get("title")))
 
-    header = [
+    route = str(alert.get("alert_route") or "").upper()
+    route_text = {
+        "TRADE": "🔥 TRADE",
+        "WATCH": "🟡 WATCH · INFO",
+        "MARKET_MOVE": "👀 MARKET MOVE · INFO",
+    }.get(route, "")
+    header = []
+    if route_text:
+        header.append(f"<b>{route_text}</b>")
+    header.extend([
         f"<b>{badge}</b>   <b>{_direction_label(direction)}</b>",
         f"<b>{title}</b>",
         "",
-    ]
+    ])
     if old_price is not None:
         price_line = f"💰 {_cents(old_price)} → {_cents(current_price)}"
     else:

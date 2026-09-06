@@ -15,6 +15,7 @@ from quality_live_analytics import record_quality_decision
 from quality_live_v2_shadow import record_shadow_decision
 from quality_engine_v3 import evaluate_quality_v3
 from smart_cooldown import check_smart_cooldown, register_smart_cooldown
+from alert_routing import classify_alert_route, claim_info_slot
 from confidence_engine import enrich_with_confidence
 from price_intelligence import enrich_with_price_intelligence
 from final_signal_engine import enrich_with_final_signal
@@ -436,27 +437,42 @@ def check_signals(
         except Exception:
             pass
 
-    # Quality Engine v3 — LIVE high-precision gate.
-    # It runs AFTER record_alert(), therefore AI Memory keeps both accepted and
-    # rejected candidates. This changes only Telegram delivery, not learning.
-    if bool(getattr(config, "QUALITY_ENGINE_V3_MODE", True)):
-        quality_alerts: list[dict[str, Any]] = []
-        for item in new_alerts:
+    # Quality v3 is still evaluated for every candidate, but Multi-tier routing
+    # keeps selected rejected candidates as INFO. AI Memory was already written
+    # above, so learning semantics remain unchanged.
+    for item in new_alerts:
+        if bool(getattr(config, "QUALITY_ENGINE_V3_MODE", True)):
             passed, reason, confirmations = evaluate_quality_v3(item)
             item["quality_v3_confirmations"] = confirmations
-            if not passed:
+            if passed:
+                item["quality_live_passed"] = True
+                item["quality_live_version"] = "v3"
+                record_quality_decision(item, True, engine_version="v3")
+            else:
+                item["quality_live_passed"] = False
                 item["quality_live_block_reason"] = reason
                 record_quality_decision(item, False, reason, engine_version="v3")
-                continue
+        else:
             item["quality_live_passed"] = True
-            item["quality_live_version"] = "v3"
-            record_quality_decision(item, True, engine_version="v3")
-            quality_alerts.append(item)
-        new_alerts = quality_alerts
 
-    # EV + Risk Engine v1 — final live precision gate.
-    if bool(getattr(config, "EV_RISK_LIVE_GATE", True)):
-        new_alerts = [item for item in new_alerts if bool(item.get("ev_risk_passed"))]
+    if bool(getattr(config, "MULTI_TIER_ALERT_ROUTING_MODE", True)):
+        routed = []
+        for item in new_alerts:
+            route = classify_alert_route(item)
+            if route is None:
+                continue
+            item["alert_route"] = route
+            item["alert_info_only"] = route != "TRADE"
+            routed.append(item)
+        new_alerts = routed
+    else:
+        # Legacy strict behavior.
+        new_alerts = [item for item in new_alerts if bool(item.get("quality_live_passed"))]
+        if bool(getattr(config, "EV_RISK_LIVE_GATE", True)):
+            new_alerts = [item for item in new_alerts if bool(item.get("ev_risk_passed"))]
+        for item in new_alerts:
+            item["alert_route"] = "TRADE"
+            item["alert_info_only"] = False
 
     priority = {
         "💎 VALUE OPPORTUNITY": 3,
@@ -466,12 +482,16 @@ def check_signals(
 
     new_alerts.sort(
         key=lambda item: (
+            0 if item.get("alert_route") == "TRADE" else 1,
+            -float(item.get("final_signal_score") or 0),
             -priority.get(item["alert_label"], 0),
             -abs(item.get("change_percent") or 0),
             -item["score"],
         )
     )
 
+    # INFO tiers have a daily flood guard; strict TRADE alerts are never capped.
+    new_alerts = [item for item in new_alerts if claim_info_slot(str(item.get("alert_route") or "TRADE"))]
     return new_alerts
 
 # ---------------- TELEGRAM FORMAT ----------------
