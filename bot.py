@@ -125,19 +125,52 @@ AUTO_ALERTS = getattr(
 keyboard = ReplyKeyboardMarkup(
     [
         ["🔍 Сканировать", "⭐ Лучшая сделка"],
+        ["📊 Рынок", "🧠 AI"],
+        ["💼 Trading", "⚙️ Настройки"],
+        ["⭐ Мои события", "ℹ Помощь"],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
+
+market_keyboard = ReplyKeyboardMarkup(
+    [
         ["📊 ТОП-5", "📈 Статистика"],
-        ["🧠 Проверки AI", "🛡 Cooldown"],
-        ["🧠 AI Insights", "🧠 Adaptive AI"],
-        ["🧪 AI Simulator", "🎯 Confidence"],
-        ["💰 Price Intelligence", "📊 Feature Intelligence"],
-        ["🧩 Combinations", "🎚 Score Audit"],
-        ["🧭 Score Recalibration", "🟢 Quality Live"],
+        ["🛡 Cooldown", "🟢 Quality Live"],
+        ["⬅️ Главное меню"],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
+
+ai_keyboard = ReplyKeyboardMarkup(
+    [
+        ["🧠 Проверки AI", "🧠 AI Insights"],
+        ["🧠 Adaptive AI", "🧪 AI Simulator"],
+        ["🎯 Confidence", "💰 Price Intelligence"],
+        ["📊 Feature Intelligence", "🧩 Combinations"],
+        ["🎚 Score Audit", "🧭 Score Recalibration"],
+        ["⬅️ Главное меню"],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
+
+trading_keyboard = ReplyKeyboardMarkup(
+    [
         ["💼 Paper Trading", "🔎 Paper Audit"],
         ["🎯 Trade v2 Audit"],
+        ["⬅️ Главное меню"],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
+
+settings_keyboard = ReplyKeyboardMarkup(
+    [
         ["⚙️ Качество сигналов"],
-        ["⭐ Мои события"],
         ["🔔 Включить уведомления", "🔕 Отключить уведомления"],
-        ["ℹ Помощь"],
+        ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -1605,6 +1638,30 @@ async def handle_buttons(
     elif text == "⭐ Лучшая сделка":
         await best_action(update, context)
 
+    elif text == "📊 Рынок":
+        await update.message.reply_text(
+            "📊 Рынок — выберите раздел 👇",
+            reply_markup=market_keyboard,
+        )
+
+    elif text == "🧠 AI":
+        await update.message.reply_text(
+            "🧠 AI и аналитика — выберите раздел 👇",
+            reply_markup=ai_keyboard,
+        )
+
+    elif text == "💼 Trading":
+        await update.message.reply_text(
+            "💼 Paper Trading и аудиты 👇",
+            reply_markup=trading_keyboard,
+        )
+
+    elif text == "⚙️ Настройки":
+        await update.message.reply_text(
+            "⚙️ Настройки бота 👇",
+            reply_markup=settings_keyboard,
+        )
+
     elif text == "📊 ТОП-5":
         await top_action(update, context)
 
@@ -1735,22 +1792,11 @@ async def handle_buttons(
             "🤖 Управление ботом\n\n"
             "🔍 Сканировать — ручной анализ\n"
             "⭐ Лучшая сделка — лучший рынок\n"
-            "📊 ТОП-5 — пять лучших рынков\n"
-            "📈 Статистика — сводка\n"
-            "🧠 Проверки AI — последние результаты AI Memory\n"
-            "🛡 Cooldown — статистика и последние блокировки\n"
-            "🧠 AI Insights — эффективность факторов и категорий\n"
-            "🎯 Confidence — теневой итоговый рейтинг сигналов\n"
-            "💰 Price Intelligence — эффективность стартовых цен\n"
-            "📊 Feature Intelligence — значимость и стабильность факторов\n"
-            "🧩 Combinations — сильные и слабые сочетания факторов\n"
-            "🎚 Score Audit — проверка калибровки Score\n"
-            "🧭 Score Recalibration — теневая перекалибровка + OPPORTUNITY audit\n"
-            "🧠 Adaptive AI — теневые рекомендации весов\n"
-            "⚙️ Качество сигналов — фильтр ALL/GOOD/PREMIUM\n"
-            "⭐ Мои события — избранные рынки и заметки\n"
-            "🔔 Включить уведомления — подписаться\n"
-            "🔕 Отключить уведомления — отписаться\n\n"
+            "📊 Рынок — ТОП-5, статистика, Cooldown, Quality Live\n"
+            "🧠 AI — AI Memory, Insights, Simulator, Confidence и аналитика\n"
+            "💼 Trading — Paper Trading и Trade v2 Audit\n"
+            "⚙️ Настройки — качество сигналов и уведомления\n"
+            "⭐ Мои события — избранные рынки и заметки\n\n"
             f"Ваши автоуведомления: {status}",
             reply_markup=keyboard,
         )
