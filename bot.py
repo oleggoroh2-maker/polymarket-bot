@@ -40,6 +40,8 @@ from memory_engine import get_recent_memory_audit
 from alert_formatter import format_calibrated_alert
 from market_structure import enrich_market_structure
 from news_social_intelligence import enrich_with_news_social
+from final_signal_v2 import enrich_with_final_signal_v2
+from funnel_analytics import format_funnel
 from trade_intelligence import enrich_with_trade_intelligence
 from similarity_engine import analyze_similarity
 from cooldown_stats import (
@@ -146,6 +148,7 @@ market_keyboard = ReplyKeyboardMarkup(
 ai_keyboard = ReplyKeyboardMarkup(
     [
         ["🧠 Проверки AI", "🧠 AI Insights"],
+        ["🔬 Signal Funnel"],
         ["🧠 Adaptive AI", "🧪 AI Simulator"],
         ["🎯 Confidence", "💰 Price Intelligence"],
         ["📊 Feature Intelligence", "🧩 Combinations"],
@@ -1444,6 +1447,8 @@ async def auto_scan_job(
         # keeping scanner/API load bounded. It is Shadow/Paper and never blocks Telegram.
         alert = await asyncio.to_thread(enrich_with_news_social, alert)
         alert = await asyncio.to_thread(enrich_with_trade_intelligence, alert)
+        # Final v2 sees News + market structure + Trade v2 context; Shadow only.
+        alert = await asyncio.to_thread(enrich_with_final_signal_v2, alert)
         if alert.get("alert_type") == "AI_OPPORTUNITY":
             alert_text = format_opportunity(alert)
         else:
@@ -1667,6 +1672,10 @@ async def handle_buttons(
 
     elif text == "📈 Статистика":
         await stats_action(update, context)
+
+    elif text == "🔬 Signal Funnel":
+        report = await asyncio.to_thread(format_funnel, 24)
+        await update.message.reply_text(report, reply_markup=ai_keyboard)
 
     elif text == "🧠 Проверки AI":
         await memory_audit_action(update, context)

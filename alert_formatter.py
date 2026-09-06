@@ -215,6 +215,8 @@ def format_calibrated_alert(
         header.append(f"🔥 Final Signal: <b>{final_signal_score:.0f}/100</b>{suffix}")
     if ev_estimate is not None and risk_score_v1 is not None:
         header.append(f"💰 EV: <b>{ev_estimate:+.1f}%</b> · {ev_label}  |  🛡 Risk: <b>{risk_score_v1:.0f}/100</b> · {risk_label_v1}")
+    if alert.get("final_v2_score") is not None:
+        header.append(f"🧪 Final v2: <b>{float(alert.get('final_v2_score')):.0f}/100</b> · {escape(str(alert.get('final_v2_tier') or 'WATCH'))} · SHADOW")
     if signal_confidence is not None:
         suffix = f" · {confidence_tier}" if confidence_tier else ""
         header.append(f"🎯 Confidence: <b>{signal_confidence:.0f}/100</b>{suffix}")
@@ -270,6 +272,13 @@ def format_calibrated_alert(
             points = _num(component.get("points"))
             icon = "🟢" if points > 0 else "🔴" if points < 0 else "⚪"
             details.append(f"{icon} {escape(str(component.get('label') or component.get('key') or 'Фактор'))}: {points:+.1f}")
+
+    if alert.get("final_v2_score") is not None:
+        details.extend(["", "<b>🧪 FINAL SIGNAL ENGINE v2</b>", f"Final v2: {float(alert.get('final_v2_score')):.1f}/100 · {escape(str(alert.get('final_v2_tier') or 'WATCH'))}", "Режим: Shadow — не влияет на отправку"])
+        for component in [x for x in (alert.get("final_v2_components") or []) if isinstance(x,dict)][:6]:
+            pts=float(component.get("points") or 0); icon="🟢" if pts>0 else "🔴" if pts<0 else "⚪"
+            details.append(f"{icon} {escape(str(component.get('label') or component.get('key') or 'Фактор'))}: {pts:+.1f}")
+        details.append(f"Ограничение рейтинга: {float(alert.get('final_v2_cap') or 100):.0f}/100")
 
     if ev_estimate is not None and risk_score_v1 is not None:
         details.extend([

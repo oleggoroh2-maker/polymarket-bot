@@ -19,6 +19,7 @@ from alert_routing import classify_alert_route, claim_info_slot
 from confidence_engine import enrich_with_confidence
 from price_intelligence import enrich_with_price_intelligence
 from final_signal_engine import enrich_with_final_signal
+from funnel_analytics import record_funnel
 from ev_risk_engine import enrich_with_ev_risk
 from trade_intelligence import enrich_with_trade_intelligence
 
@@ -366,6 +367,7 @@ def get_min_alert_liquidity(signal: dict[str, Any]) -> float:
 def check_signals(
     signals: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    funnel = {"markets": len(signals), "liquidity_pass":0, "detected":0, "grouped":0, "cooldown_pass":0, "memory_recorded":0, "quality_pass":0, "trade_route":0, "watch_route":0, "move_route":0, "dropped_route":0}
     candidates: list[dict[str, Any]] = []
 
     for signal in signals:
@@ -375,11 +377,13 @@ def check_signals(
         if liquidity < min_liquidity:
             continue
 
+        funnel["liquidity_pass"] += 1
         market_id = str(signal.get("id") or "")
         if not market_id:
             continue
 
         for alert_data in detect_alerts(signal):
+            funnel["detected"] += 1
             alert_type = str(alert_data["alert_type"])
 
             prepared_alert = enrich_signal(
@@ -404,6 +408,7 @@ def check_signals(
     # Only the strongest representative is stored and sent, so mutually
     # exclusive outcomes do not distort AI Memory or flood subscribers.
     grouped_candidates = select_group_representatives(candidates)
+    funnel["grouped"] = len(grouped_candidates)
     new_alerts: list[dict[str, Any]] = []
     group_cooldown_hours = float(
         getattr(config, "MARKET_GROUP_COOLDOWN_HOURS", 24)
@@ -418,12 +423,14 @@ def check_signals(
         if cooldown.blocked:
             continue
 
+        funnel["cooldown_pass"] += 1
         save_alert(market_id, alert_type)
         save_group_alert(group_key, "ANY_ALERT", market_id)
         register_smart_cooldown(prepared_alert)
 
         try:
             prepared_alert["ai_signal_id"] = record_alert(prepared_alert)
+            if prepared_alert["ai_signal_id"]: funnel["memory_recorded"] += 1
         except Exception:
             # AI Data Layer не должен останавливать рабочие алерты.
             prepared_alert["ai_signal_id"] = None
@@ -446,6 +453,7 @@ def check_signals(
             item["quality_v3_confirmations"] = confirmations
             if passed:
                 item["quality_live_passed"] = True
+                funnel["quality_pass"] += 1
                 item["quality_live_version"] = "v3"
                 record_quality_decision(item, True, engine_version="v3")
             else:
@@ -460,7 +468,11 @@ def check_signals(
         for item in new_alerts:
             route = classify_alert_route(item)
             if route is None:
+                funnel["dropped_route"] += 1
                 continue
+            if route == "TRADE": funnel["trade_route"] += 1
+            elif route == "WATCH": funnel["watch_route"] += 1
+            elif route == "MARKET_MOVE": funnel["move_route"] += 1
             item["alert_route"] = route
             item["alert_info_only"] = route != "TRADE"
             routed.append(item)
@@ -492,6 +504,8 @@ def check_signals(
 
     # INFO tiers have a daily flood guard; strict TRADE alerts are never capped.
     new_alerts = [item for item in new_alerts if claim_info_slot(str(item.get("alert_route") or "TRADE"))]
+    try: record_funnel(funnel)
+    except Exception: pass
     return new_alerts
 
 # ---------------- TELEGRAM FORMAT ----------------

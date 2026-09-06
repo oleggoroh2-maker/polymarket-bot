@@ -48,7 +48,7 @@ def ensure_paper_schema() -> None:
         CREATE INDEX IF NOT EXISTS idx_paper_trades_opened ON paper_trades(opened_at);
         """)
         cols={r[1] for r in c.execute("PRAGMA table_info(paper_trades)").fetchall()}
-        additions={"trade_side":"TEXT", "market_regime":"TEXT", "regime_confidence":"REAL", "regime_reasons":"TEXT", "risk_stake":"REAL", "entry_quality":"REAL", "chase_risk":"REAL", "trade_intelligence_version":"TEXT", "trade_v2_decision":"TEXT", "trade_v2_skip_reasons":"TEXT", "trade_v2_exit_minutes":"INTEGER", "news_status":"TEXT", "news_score":"REAL", "news_direction":"TEXT", "news_freshest_hours":"REAL", "news_source_count":"INTEGER", "social_mentions":"INTEGER"}
+        additions={"trade_side":"TEXT", "market_regime":"TEXT", "regime_confidence":"REAL", "regime_reasons":"TEXT", "risk_stake":"REAL", "entry_quality":"REAL", "chase_risk":"REAL", "trade_intelligence_version":"TEXT", "trade_v2_decision":"TEXT", "trade_v2_skip_reasons":"TEXT", "trade_v2_exit_minutes":"INTEGER", "news_status":"TEXT", "news_score":"REAL", "news_direction":"TEXT", "news_freshest_hours":"REAL", "news_source_count":"INTEGER", "social_mentions":"INTEGER", "final_v2_score":"REAL", "final_v2_tier":"TEXT", "news_catalyst_class":"TEXT", "news_outcome_support":"TEXT", "news_source_quality":"REAL", "news_priced_in_risk":"REAL"}
         for name, typ in additions.items():
             if name not in cols: c.execute(f"ALTER TABLE paper_trades ADD COLUMN {name} {typ}")
         c.commit()
@@ -77,6 +77,8 @@ def record_delivered_trade(alert: dict[str, Any]) -> bool:
             str(alert.get("category") or "OTHER"),alert_type,str(alert.get("title") or ""),
             float(alert.get("final_signal_score") or 0),float(alert.get("ev_estimate_percent") or 0),
             float(alert.get("risk_score") or 0),side,regime["regime"],regime["confidence"],json.dumps(regime["reasons"],ensure_ascii=False),risk_stake,entry_quality,chase_risk,ti_version,str(alert.get("trade_v2_decision") or "LEGACY"),json.dumps(alert.get("trade_v2_skip_reasons") or [],ensure_ascii=False),int(alert.get("trade_v2_exit_minutes") or 360),str(alert.get("news_status") or "UNKNOWN"),float(alert.get("news_score") or 0),str(alert.get("news_direction") or "NEUTRAL"),alert.get("news_freshest_hours"),int(alert.get("news_source_count") or 0),int(alert.get("social_mentions") or 0)))
+        if cur.rowcount>0:
+            c.execute("""UPDATE paper_trades SET final_v2_score=?,final_v2_tier=?,news_catalyst_class=?,news_outcome_support=?,news_source_quality=?,news_priced_in_risk=? WHERE signal_id=?""",(alert.get("final_v2_score"),str(alert.get("final_v2_tier") or ""),str(alert.get("news_catalyst_class") or ""),str(alert.get("news_outcome_support") or ""),alert.get("news_source_quality"),alert.get("news_priced_in_risk"),signal_id))
         c.commit(); return cur.rowcount>0
 
 def _rows(c, minutes:int, where:str="", args:tuple=()):

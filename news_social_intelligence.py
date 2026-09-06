@@ -105,7 +105,18 @@ def analyze_news_social(alert:dict[str,Any])->dict[str,Any]:
     expected="NO" if any(k in str(alert.get("alert_type") or "").upper() for k in ("DIP","DROP","BEAR")) else "YES"
     if direction in ("YES","NO") and direction != expected and (official or sources>=2): status="CONTRADICTED"
     score=min(100.0, len(news)*9 + len(social)*4 + sources*8 + (15 if official else 0) + (10 if freshest is not None and freshest<=2 else 0))
-    result={"news_status":status,"news_score":round(score,1),"news_direction":direction,"news_relevance":round(sum(float(x.get("relevance",0)) for x in relevant[:5])/max(1,min(5,len(relevant))),1),"news_freshest_hours":None if freshest is None else round(freshest,2),"news_source_count":sources,"news_items_count":len(relevant),"social_mentions":len(social),"news_query":q,"news_top_items":relevant[:5],"news_errors":errors}
+    # v2 separates topical news from evidence that supports the exact traded outcome.
+    expected="NO" if any(k in str(alert.get("alert_type") or "").upper() for k in ("DIP","DROP","BEAR")) else "YES"
+    outcome_support=direction if direction in ("YES","NO") else "NEUTRAL"
+    if status=="CONTRADICTED": catalyst_class="CONTRADICTED"
+    elif status=="CONFIRMED_NEWS" and outcome_support in ("YES","NO"): catalyst_class="CONFIRMED_CATALYST"
+    elif status=="CONFIRMED_NEWS": catalyst_class="RELATED_NEWS"
+    else: catalyst_class=status
+    source_quality=min(100.0, sources*14 + (30 if official else 0) + (10 if len(news)>=3 else 0))
+    move=abs(float(alert.get("change_percent") or 0))
+    priced_in=min(100.0, (35 if freshest is not None and freshest>2 else 10) + min(55.0,move*.45) + (10 if catalyst_class in ("CONFIRMED_CATALYST","RELATED_NEWS") else 0)) if relevant else 0.0
+    result={"news_status":status,"news_score":round(score,1),"news_direction":direction,"news_relevance":round(sum(float(x.get("relevance",0)) for x in relevant[:5])/max(1,min(5,len(relevant))),1),"news_freshest_hours":None if freshest is None else round(freshest,2),"news_source_count":sources,"news_items_count":len(relevant),"social_mentions":len(social),"news_query":q,"news_top_items":relevant[:5],"news_errors":errors,
+    "news_catalyst_class":catalyst_class,"news_outcome_support":outcome_support,"news_source_quality":round(source_quality,1),"news_priced_in_risk":round(priced_in,1),"news_expected_side":expected,"news_intelligence_version":"v2"}
     _CACHE[key]=(time.time(),result); return dict(result)
 
 def enrich_with_news_social(alert:dict[str,Any])->dict[str,Any]:

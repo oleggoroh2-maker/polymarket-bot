@@ -249,3 +249,7 @@ ALERT_ROUTING_WATCH_FINAL_MIN = 72.0
 ALERT_ROUTING_WATCH_RISK_MAX = 75.0
 ALERT_ROUTING_MOVE_CHANGE_MIN = 45.0
 ALERT_ROUTING_MOVE_VOLUME_MIN = 1000.0
+
+# Final Signal v2 is shadow-only. It is calculated after News/Social and market
+# structure enrichment and never changes Telegram delivery or real trade gates.
+FINAL_SIGNAL_V2_SHADOW_MODE = True
