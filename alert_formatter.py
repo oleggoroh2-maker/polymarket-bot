@@ -291,6 +291,14 @@ def format_calibrated_alert(
                         f"Stake: ${float(alert.get('trade_v3_stake') or 0):.0f}",
                         "Причины: "+escape(", ".join(map(str,reasons)) if reasons else "—"),
                         f"A/B: {escape(str(alert.get('trade_v3_disagreement') or 'AGREE'))}"])
+        if alert.get('trade_v3_near_miss_score') is not None:
+            details.append(
+                f"Near Miss: {float(alert.get('trade_v3_near_miss_score') or 0):.0f}/100 · "
+                f"gap {float(alert.get('trade_v3_distance_to_trade') or 0):.0f} · "
+                f"blockers {int(alert.get('trade_v3_blocker_count') or 0)}"
+            )
+        if alert.get('trade_v3_continuation_probability') is not None:
+            details.append(f"Continuation: {float(alert.get('trade_v3_continuation_probability') or 0):.1f}%")
 
     if ev_estimate is not None and risk_score_v1 is not None:
         details.extend([

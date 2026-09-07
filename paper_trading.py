@@ -48,7 +48,7 @@ def ensure_paper_schema() -> None:
         CREATE INDEX IF NOT EXISTS idx_paper_trades_opened ON paper_trades(opened_at);
         """)
         cols={r[1] for r in c.execute("PRAGMA table_info(paper_trades)").fetchall()}
-        additions={"trade_side":"TEXT", "market_regime":"TEXT", "regime_confidence":"REAL", "regime_reasons":"TEXT", "risk_stake":"REAL", "entry_quality":"REAL", "chase_risk":"REAL", "trade_intelligence_version":"TEXT", "trade_v2_decision":"TEXT", "trade_v2_skip_reasons":"TEXT", "trade_v2_exit_minutes":"INTEGER", "news_status":"TEXT", "news_score":"REAL", "news_direction":"TEXT", "news_freshest_hours":"REAL", "news_source_count":"INTEGER", "social_mentions":"INTEGER", "final_v2_score":"REAL", "final_v2_tier":"TEXT", "news_catalyst_class":"TEXT", "news_outcome_support":"TEXT", "news_source_quality":"REAL", "news_priced_in_risk":"REAL", "trade_v3_decision":"TEXT", "trade_v3_skip_reasons":"TEXT", "trade_v3_stake":"REAL", "trade_v3_version":"TEXT", "trade_v3_challenger":"INTEGER", "trade_v3_disagreement":"TEXT"}
+        additions={"trade_side":"TEXT", "market_regime":"TEXT", "regime_confidence":"REAL", "regime_reasons":"TEXT", "risk_stake":"REAL", "entry_quality":"REAL", "chase_risk":"REAL", "trade_intelligence_version":"TEXT", "trade_v2_decision":"TEXT", "trade_v2_skip_reasons":"TEXT", "trade_v2_exit_minutes":"INTEGER", "news_status":"TEXT", "news_score":"REAL", "news_direction":"TEXT", "news_freshest_hours":"REAL", "news_source_count":"INTEGER", "social_mentions":"INTEGER", "final_v2_score":"REAL", "final_v2_tier":"TEXT", "news_catalyst_class":"TEXT", "news_outcome_support":"TEXT", "news_source_quality":"REAL", "news_priced_in_risk":"REAL", "trade_v3_decision":"TEXT", "trade_v3_skip_reasons":"TEXT", "trade_v3_stake":"REAL", "trade_v3_version":"TEXT", "trade_v3_challenger":"INTEGER", "trade_v3_disagreement":"TEXT", "trade_v3_near_miss_score":"REAL", "trade_v3_distance_to_trade":"REAL", "trade_v3_blocker_count":"INTEGER", "trade_v3_continuation_probability":"REAL"}
         for name, typ in additions.items():
             if name not in cols: c.execute(f"ALTER TABLE paper_trades ADD COLUMN {name} {typ}")
         c.commit()
@@ -78,7 +78,7 @@ def record_delivered_trade(alert: dict[str, Any]) -> bool:
             float(alert.get("final_signal_score") or 0),float(alert.get("ev_estimate_percent") or 0),
             float(alert.get("risk_score") or 0),side,regime["regime"],regime["confidence"],json.dumps(regime["reasons"],ensure_ascii=False),risk_stake,entry_quality,chase_risk,ti_version,str(alert.get("trade_v2_decision") or "LEGACY"),json.dumps(alert.get("trade_v2_skip_reasons") or [],ensure_ascii=False),int(alert.get("trade_v2_exit_minutes") or 360),str(alert.get("news_status") or "UNKNOWN"),float(alert.get("news_score") or 0),str(alert.get("news_direction") or "NEUTRAL"),alert.get("news_freshest_hours"),int(alert.get("news_source_count") or 0),int(alert.get("social_mentions") or 0)))
         if cur.rowcount>0:
-            c.execute("""UPDATE paper_trades SET final_v2_score=?,final_v2_tier=?,news_catalyst_class=?,news_outcome_support=?,news_source_quality=?,news_priced_in_risk=?,trade_v3_decision=?,trade_v3_skip_reasons=?,trade_v3_stake=?,trade_v3_version=?,trade_v3_challenger=?,trade_v3_disagreement=? WHERE signal_id=?""",(alert.get("final_v2_score"),str(alert.get("final_v2_tier") or ""),str(alert.get("news_catalyst_class") or ""),str(alert.get("news_outcome_support") or ""),alert.get("news_source_quality"),alert.get("news_priced_in_risk"),str(alert.get("trade_v3_decision") or ""),json.dumps(alert.get("trade_v3_skip_reasons") or [],ensure_ascii=False),float(alert.get("trade_v3_stake") or 0),str(alert.get("trade_v3_version") or ""),1 if alert.get("trade_v3_challenger") else 0,str(alert.get("trade_v3_disagreement") or ""),signal_id))
+            c.execute("""UPDATE paper_trades SET final_v2_score=?,final_v2_tier=?,news_catalyst_class=?,news_outcome_support=?,news_source_quality=?,news_priced_in_risk=?,trade_v3_decision=?,trade_v3_skip_reasons=?,trade_v3_stake=?,trade_v3_version=?,trade_v3_challenger=?,trade_v3_disagreement=?,trade_v3_near_miss_score=?,trade_v3_distance_to_trade=?,trade_v3_blocker_count=?,trade_v3_continuation_probability=? WHERE signal_id=?""",(alert.get("final_v2_score"),str(alert.get("final_v2_tier") or ""),str(alert.get("news_catalyst_class") or ""),str(alert.get("news_outcome_support") or ""),alert.get("news_source_quality"),alert.get("news_priced_in_risk"),str(alert.get("trade_v3_decision") or ""),json.dumps(alert.get("trade_v3_skip_reasons") or [],ensure_ascii=False),float(alert.get("trade_v3_stake") or 0),str(alert.get("trade_v3_version") or ""),1 if alert.get("trade_v3_challenger") else 0,str(alert.get("trade_v3_disagreement") or ""),alert.get("trade_v3_near_miss_score"),alert.get("trade_v3_distance_to_trade"),int(alert.get("trade_v3_blocker_count") or 0),alert.get("trade_v3_continuation_probability"),signal_id))
         c.commit(); return cur.rowcount>0
 
 def _rows(c, minutes:int, where:str="", args:tuple=()):
@@ -384,6 +384,46 @@ def _shadow_stats(c, minutes:int, where:str, stake_expr:str='p.trade_v3_stake')-
             'win_rate':sum(x>0 for x in pnls)/len(pnls)*100 if pnls else None,
             'profit_factor':gp/gl if gl>0 else (float('inf') if pnls and gp>0 else None),'invested':invested}
 
+def _v3_near_miss_rows(c, limit:int=8)->list[dict[str,Any]]:
+    rows=c.execute("""SELECT p.signal_id,p.title,p.category,p.trade_side,p.trade_v3_near_miss_score,
+        p.trade_v3_distance_to_trade,p.trade_v3_blocker_count,p.trade_v3_skip_reasons,
+        p.final_v2_score,p.ev_estimate,p.entry_quality,p.chase_risk,p.trade_v3_continuation_probability,
+        p.news_catalyst_class,p.news_priced_in_risk,o.price
+        FROM paper_trades p
+        LEFT JOIN signal_outcomes o ON o.signal_id=p.signal_id AND o.checkpoint_minutes=180 AND o.status IS NOT NULL
+        WHERE p.trade_v3_version='v3-shadow' AND p.trade_v3_decision='SKIP'
+          AND p.trade_v3_near_miss_score IS NOT NULL
+        ORDER BY p.trade_v3_near_miss_score DESC,p.opened_at DESC LIMIT ?""",(limit,)).fetchall()
+    out=[]
+    cost=float(getattr(config,'PAPER_TRADING_COST_PERCENT',1.0)); stake=float(getattr(config,'PAPER_TRADE_STAKE_USD',100.0))
+    for r in rows:
+        reasons=[]
+        try: reasons=json.loads(r[7] or '[]')
+        except Exception: reasons=[]
+        roi3=None
+        if r[15] is not None:
+            base=c.execute("SELECT entry_price,alert_type,trade_side FROM paper_trades WHERE signal_id=?",(r[0],)).fetchone()
+            if base:
+                roi3=_trade_math(stake,float(base[0]),float(r[15]),str(base[2] or _side(base[1])),cost)['roi']
+        out.append({'signal_id':r[0],'title':str(r[1] or ''),'category':str(r[2] or ''),'side':str(r[3] or ''),
+                    'near_score':float(r[4] or 0),'distance':float(r[5] or 0),'blockers':int(r[6] or 0),
+                    'reasons':reasons,'final_v2':r[8],'ev':r[9],'entry_q':r[10],'chase':r[11],'continuation':r[12],
+                    'catalyst':str(r[13] or ''),'priced_in':r[14],'roi3':roi3})
+    return out
+
+def _v3_near_miss_bands(c)->list[tuple[str,dict[str,Any],dict[str,Any]]]:
+    stake=str(float(getattr(config,'PAPER_TRADE_STAKE_USD',100.0)))
+    bands=[('90–99','p.trade_v3_near_miss_score>=90 AND p.trade_v3_near_miss_score<100'),
+           ('80–89','p.trade_v3_near_miss_score>=80 AND p.trade_v3_near_miss_score<90'),
+           ('70–79','p.trade_v3_near_miss_score>=70 AND p.trade_v3_near_miss_score<80'),
+           ('<70','p.trade_v3_near_miss_score<70')]
+    out=[]
+    for name,where in bands:
+        base=f"p.trade_v3_version='v3-shadow' AND p.trade_v3_decision='SKIP' AND p.trade_v3_near_miss_score IS NOT NULL AND {where}"
+        a=_shadow_stats(c,180,base,stake); b=_shadow_stats(c,1440,base,stake)
+        if a['n'] or b['n']: out.append((name,a,b))
+    return out
+
 def get_trade_v3_audit()->dict[str,Any]:
     ensure_paper_schema()
     with closing(get_connection()) as c:
@@ -402,7 +442,13 @@ def get_trade_v3_audit()->dict[str,Any]:
         for tier in ('WEAK','WATCH','GOOD','STRONG','ELITE'):
             x=_shadow_stats(c,180,f"p.final_v2_tier='{tier}'",str(float(getattr(config,'PAPER_TRADE_STAKE_USD',100.0))))
             if x['n']: tiers.append((tier,x))
-    return {'total':total,'v3trade':v3trade,'challenger':challenger,'disagree':disagree,'checkpoints':checkpoints,'tiers_3h':tiers}
+        near_miss_rows=_v3_near_miss_rows(c,8)
+        near_miss_bands=_v3_near_miss_bands(c)
+    return {'total':total,'v3trade':v3trade,'challenger':challenger,'disagree':disagree,'checkpoints':checkpoints,'tiers_3h':tiers,'near_miss_rows':near_miss_rows,'near_miss_bands':near_miss_bands}
+
+def _val(v:Any)->str:
+    try: return f"{float(v):.1f}"
+    except (TypeError,ValueError): return "—"
 
 def format_trade_v3_audit(r:dict[str,Any])->str:
     lines=['🧪 Trade Intelligence v3 · SHADOW','',f"Новых v3: {r['total']} · TRADE {r['v3trade']} · SKIP {r['total']-r['v3trade']}",
@@ -423,15 +469,27 @@ def format_trade_v3_audit(r:dict[str,Any])->str:
         for tier,x in r['tiers_3h']:
             pf='—' if x['profit_factor'] is None else ('∞' if x['profit_factor']==float('inf') else f"{x['profit_factor']:.2f}")
             lines.append(f"• {tier}: n={x['n']} · ROI {_pct(x['roi'])} · PF {pf}")
-    lines += ['','ℹ️ v3/Challenger только Shadow/Paper. Live routing и Trade v2 не изменены.']
+    if r.get('near_miss_bands'):
+        lines += ['','🔬 Near Miss · v3 SKIP по близости к TRADE','3ч / 24ч · $100 counterfactual']
+        for band,a,b in r['near_miss_bands']:
+            lines.append(f"• {band}: 3ч n={a['n']} ROI {_pct(a['roi'])} · 24ч n={b['n']} ROI {_pct(b['roi'])}")
+    if r.get('near_miss_rows'):
+        lines += ['','🎯 Ближайшие SKIP к TRADE']
+        for x in r['near_miss_rows'][:6]:
+            title=x['title'][:42] + ('…' if len(x['title'])>42 else '')
+            reasons=','.join(x['reasons'][:2]) or '—'
+            roi='—' if x['roi3'] is None else f"{x['roi3']:+.1f}%"
+            lines.append(f"• {x['near_score']:.0f}/100 · gap {x['distance']:.0f} · {x['side']} · 3ч {roi} · {title}")
+            lines.append(f"  blockers {x['blockers']}: {reasons} · FV2 {_val(x['final_v2'])} · EV {_val(x['ev'])}% · Q {_val(x['entry_q'])} · Chase {_val(x['chase'])}")
+    lines += ['','ℹ️ Near Miss — только диагностика. v3/Challenger Shadow/Paper; Live routing и Trade v2 не изменены.']
     return '\n'.join(lines)
 
 def get_news_v2_audit()->dict[str,Any]:
     ensure_paper_schema(); stake=float(getattr(config,'PAPER_TRADE_STAKE_USD',100.0))
     with closing(get_connection()) as c:
         classes=[]
-        vals=[r[0] for r in c.execute("SELECT DISTINCT news_catalyst_class FROM paper_trades WHERE news_catalyst_class IS NOT NULL AND news_catalyst_class<>''").fetchall()]
-        for klass in vals:
+        class_values=[r[0] for r in c.execute("SELECT DISTINCT news_catalyst_class FROM paper_trades WHERE news_catalyst_class IS NOT NULL AND news_catalyst_class<>''").fetchall()]
+        for klass in class_values:
             # Quote values read from our own DB before embedding in the diagnostic WHERE.
             esc=str(klass).replace("'","''"); stats={label:_shadow_stats(c,cp,f"p.news_catalyst_class='{esc}'",str(stake)) for cp,label in CHECKPOINTS}
             classes.append((str(klass),stats))
@@ -440,10 +498,18 @@ def get_news_v2_audit()->dict[str,Any]:
         for val in vals:
             esc=str(val).replace("'","''"); support.append((str(val),_shadow_stats(c,180,f"p.news_outcome_support='{esc}'",str(stake))))
         priced=[]
-        for name,where in [('LOW <30','p.news_priced_in_risk<30'),('MID 30-59','p.news_priced_in_risk>=30 AND p.news_priced_in_risk<60'),('HIGH 60+','p.news_priced_in_risk>=60')]:
+        risk_bands=[('LOW','p.news_priced_in_risk<30'),('MID','p.news_priced_in_risk>=30 AND p.news_priced_in_risk<60'),('HIGH','p.news_priced_in_risk>=60')]
+        for name,where in [('LOW <30',risk_bands[0][1]),('MID 30-59',risk_bands[1][1]),('HIGH 60+',risk_bands[2][1])]:
             x=_shadow_stats(c,180,where,str(stake));
             if x['n']: priced.append((name,x))
-    return {'classes':classes,'support_3h':support,'priced_3h':priced}
+        catalyst_priced=[]
+        for klass in class_values:
+            esc=str(klass).replace("'","''")
+            for band,where in risk_bands:
+                base=f"p.news_catalyst_class='{esc}' AND {where}"
+                a=_shadow_stats(c,180,base,str(stake)); b=_shadow_stats(c,1440,base,str(stake))
+                if a['n'] or b['n']: catalyst_priced.append((str(klass),band,a,b))
+    return {'classes':classes,'support_3h':support,'priced_3h':priced,'catalyst_priced':catalyst_priced}
 
 def format_news_v2_audit(r:dict[str,Any])->str:
     lines=['📰 News Intelligence v2 · Performance','','$100 counterfactual · future-only','', 'Катализатор · 3ч / 24ч']
@@ -456,5 +522,9 @@ def format_news_v2_audit(r:dict[str,Any])->str:
     if r['priced_3h']:
         lines += ['','Priced-in risk · 3ч']
         for k,x in r['priced_3h']: lines.append(f"• {k}: n={x['n']} · ROI {_pct(x['roi'])}")
+    if r.get('catalyst_priced'):
+        lines += ['','🧩 Катализатор × Priced-in · 3ч / 24ч']
+        for klass,band,a,b in r['catalyst_priced']:
+            lines.append(f"• {klass} × {band}: 3ч n={a['n']} ROI {_pct(a['roi'])} · 24ч n={b['n']} ROI {_pct(b['roi'])}")
     lines += ['','ℹ️ Аудит ничего не блокирует и использует только данные, замороженные при входе.']
     return '\n'.join(lines)
