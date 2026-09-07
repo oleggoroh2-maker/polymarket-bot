@@ -253,3 +253,6 @@ ALERT_ROUTING_MOVE_VOLUME_MIN = 1000.0
 # Final Signal v2 is shadow-only. It is calculated after News/Social and market
 # structure enrichment and never changes Telegram delivery or real trade gates.
 FINAL_SIGNAL_V2_SHADOW_MODE = True
+
+# Trade Intelligence v3 is shadow/paper only. It never changes Telegram routing.
+TRADE_INTELLIGENCE_V3_SHADOW_MODE = True

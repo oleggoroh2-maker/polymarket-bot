@@ -48,7 +48,7 @@ def ensure_paper_schema() -> None:
         CREATE INDEX IF NOT EXISTS idx_paper_trades_opened ON paper_trades(opened_at);
         """)
         cols={r[1] for r in c.execute("PRAGMA table_info(paper_trades)").fetchall()}
-        additions={"trade_side":"TEXT", "market_regime":"TEXT", "regime_confidence":"REAL", "regime_reasons":"TEXT", "risk_stake":"REAL", "entry_quality":"REAL", "chase_risk":"REAL", "trade_intelligence_version":"TEXT", "trade_v2_decision":"TEXT", "trade_v2_skip_reasons":"TEXT", "trade_v2_exit_minutes":"INTEGER", "news_status":"TEXT", "news_score":"REAL", "news_direction":"TEXT", "news_freshest_hours":"REAL", "news_source_count":"INTEGER", "social_mentions":"INTEGER", "final_v2_score":"REAL", "final_v2_tier":"TEXT", "news_catalyst_class":"TEXT", "news_outcome_support":"TEXT", "news_source_quality":"REAL", "news_priced_in_risk":"REAL"}
+        additions={"trade_side":"TEXT", "market_regime":"TEXT", "regime_confidence":"REAL", "regime_reasons":"TEXT", "risk_stake":"REAL", "entry_quality":"REAL", "chase_risk":"REAL", "trade_intelligence_version":"TEXT", "trade_v2_decision":"TEXT", "trade_v2_skip_reasons":"TEXT", "trade_v2_exit_minutes":"INTEGER", "news_status":"TEXT", "news_score":"REAL", "news_direction":"TEXT", "news_freshest_hours":"REAL", "news_source_count":"INTEGER", "social_mentions":"INTEGER", "final_v2_score":"REAL", "final_v2_tier":"TEXT", "news_catalyst_class":"TEXT", "news_outcome_support":"TEXT", "news_source_quality":"REAL", "news_priced_in_risk":"REAL", "trade_v3_decision":"TEXT", "trade_v3_skip_reasons":"TEXT", "trade_v3_stake":"REAL", "trade_v3_version":"TEXT", "trade_v3_challenger":"INTEGER", "trade_v3_disagreement":"TEXT"}
         for name, typ in additions.items():
             if name not in cols: c.execute(f"ALTER TABLE paper_trades ADD COLUMN {name} {typ}")
         c.commit()
@@ -78,7 +78,7 @@ def record_delivered_trade(alert: dict[str, Any]) -> bool:
             float(alert.get("final_signal_score") or 0),float(alert.get("ev_estimate_percent") or 0),
             float(alert.get("risk_score") or 0),side,regime["regime"],regime["confidence"],json.dumps(regime["reasons"],ensure_ascii=False),risk_stake,entry_quality,chase_risk,ti_version,str(alert.get("trade_v2_decision") or "LEGACY"),json.dumps(alert.get("trade_v2_skip_reasons") or [],ensure_ascii=False),int(alert.get("trade_v2_exit_minutes") or 360),str(alert.get("news_status") or "UNKNOWN"),float(alert.get("news_score") or 0),str(alert.get("news_direction") or "NEUTRAL"),alert.get("news_freshest_hours"),int(alert.get("news_source_count") or 0),int(alert.get("social_mentions") or 0)))
         if cur.rowcount>0:
-            c.execute("""UPDATE paper_trades SET final_v2_score=?,final_v2_tier=?,news_catalyst_class=?,news_outcome_support=?,news_source_quality=?,news_priced_in_risk=? WHERE signal_id=?""",(alert.get("final_v2_score"),str(alert.get("final_v2_tier") or ""),str(alert.get("news_catalyst_class") or ""),str(alert.get("news_outcome_support") or ""),alert.get("news_source_quality"),alert.get("news_priced_in_risk"),signal_id))
+            c.execute("""UPDATE paper_trades SET final_v2_score=?,final_v2_tier=?,news_catalyst_class=?,news_outcome_support=?,news_source_quality=?,news_priced_in_risk=?,trade_v3_decision=?,trade_v3_skip_reasons=?,trade_v3_stake=?,trade_v3_version=?,trade_v3_challenger=?,trade_v3_disagreement=? WHERE signal_id=?""",(alert.get("final_v2_score"),str(alert.get("final_v2_tier") or ""),str(alert.get("news_catalyst_class") or ""),str(alert.get("news_outcome_support") or ""),alert.get("news_source_quality"),alert.get("news_priced_in_risk"),str(alert.get("trade_v3_decision") or ""),json.dumps(alert.get("trade_v3_skip_reasons") or [],ensure_ascii=False),float(alert.get("trade_v3_stake") or 0),str(alert.get("trade_v3_version") or ""),1 if alert.get("trade_v3_challenger") else 0,str(alert.get("trade_v3_disagreement") or ""),signal_id))
         c.commit(); return cur.rowcount>0
 
 def _rows(c, minutes:int, where:str="", args:tuple=()):
@@ -368,3 +368,93 @@ def format_paper_audit(items:list[dict[str,Any]])->str:
                   f"Shares: {x['shares']:.2f} · Gross {_money(x['gross_pnl'])} · costs {x['costs']:.2f}$ · NET {_money(x['net_pnl'])} · ROI {x['roi']:+.1f}%",
                   f"AI Memory directional: {float(x['directional_return']):+.1f}% · {x['status']}",""]
     return "\n".join(lines).rstrip()
+
+# ---------------- Trade v3 / Final v2 / News v2 future-only audits ----------------
+def _shadow_stats(c, minutes:int, where:str, stake_expr:str='p.trade_v3_stake')->dict[str,Any]:
+    rows=c.execute(f'''SELECT p.entry_price,p.alert_type,p.trade_side,o.price,{stake_expr}
+        FROM paper_trades p JOIN signal_outcomes o ON o.signal_id=p.signal_id
+        WHERE o.checkpoint_minutes=? AND o.status IS NOT NULL AND ({where})''',(minutes,)).fetchall()
+    cost=float(getattr(config,'PAPER_TRADING_COST_PERCENT',1.0)); pnls=[]; invested=0.0
+    for entry,atype,side,exitp,stake in rows:
+        st=float(stake or 0)
+        if st<=0: continue
+        m=_trade_math(st,float(entry),float(exitp),str(side or _side(atype)),cost); pnls.append(m['net_pnl']); invested+=st
+    gp=sum(x for x in pnls if x>0); gl=-sum(x for x in pnls if x<0)
+    return {'n':len(pnls),'pnl':sum(pnls),'roi':sum(pnls)/invested*100 if invested else None,
+            'win_rate':sum(x>0 for x in pnls)/len(pnls)*100 if pnls else None,
+            'profit_factor':gp/gl if gl>0 else (float('inf') if pnls and gp>0 else None),'invested':invested}
+
+def get_trade_v3_audit()->dict[str,Any]:
+    ensure_paper_schema()
+    with closing(get_connection()) as c:
+        total=int(c.execute("SELECT COUNT(*) FROM paper_trades WHERE trade_v3_version='v3-shadow'").fetchone()[0] or 0)
+        v3trade=int(c.execute("SELECT COUNT(*) FROM paper_trades WHERE trade_v3_version='v3-shadow' AND trade_v3_decision='TRADE'").fetchone()[0] or 0)
+        challenger=int(c.execute("SELECT COUNT(*) FROM paper_trades WHERE trade_v3_version='v3-shadow' AND trade_v3_challenger=1").fetchone()[0] or 0)
+        disagree={str(k):int(n) for k,n in c.execute("SELECT COALESCE(trade_v3_disagreement,'?'),COUNT(*) FROM paper_trades WHERE trade_v3_version='v3-shadow' GROUP BY trade_v3_disagreement").fetchall()}
+        checkpoints={}
+        for cp,label in CHECKPOINTS:
+            checkpoints[label]={
+                'v3':_shadow_stats(c,cp,"p.trade_v3_version='v3-shadow' AND p.trade_v3_decision='TRADE'"),
+                'challenger':_shadow_stats(c,cp,"p.trade_v3_version='v3-shadow' AND p.trade_v3_challenger=1"),
+                'v2trade_v3skip':_shadow_stats(c,cp,"p.trade_v3_version='v3-shadow' AND p.trade_v2_decision='TRADE' AND p.trade_v3_decision='SKIP'",str(float(getattr(config,'PAPER_TRADE_STAKE_USD',100.0))))
+            }
+        tiers=[]
+        for tier in ('WEAK','WATCH','GOOD','STRONG','ELITE'):
+            x=_shadow_stats(c,180,f"p.final_v2_tier='{tier}'",str(float(getattr(config,'PAPER_TRADE_STAKE_USD',100.0))))
+            if x['n']: tiers.append((tier,x))
+    return {'total':total,'v3trade':v3trade,'challenger':challenger,'disagree':disagree,'checkpoints':checkpoints,'tiers_3h':tiers}
+
+def format_trade_v3_audit(r:dict[str,Any])->str:
+    lines=['🧪 Trade Intelligence v3 · SHADOW','',f"Новых v3: {r['total']} · TRADE {r['v3trade']} · SKIP {r['total']-r['v3trade']}",
+           f"Challenger (v2 SKIP → v3 TRADE): {r['challenger']}"]
+    if r['disagree']: lines.append('Разногласия: '+' · '.join(f'{k}×{v}' for k,v in sorted(r['disagree'].items(),key=lambda z:-z[1])))
+    lines += ['','📊 Future-only результаты']
+    for label in ('1ч','3ч','6ч','12ч','24ч'):
+        x=r['checkpoints'][label]['v3']; pf='—' if x['profit_factor'] is None else ('∞' if x['profit_factor']==float('inf') else f"{x['profit_factor']:.2f}")
+        lines.append(f"• {label} v3 TRADE: n={x['n']} · ROI {_pct(x['roi'])} · PnL {_money(x['pnl'])} · PF {pf}")
+    lines += ['','🧪 Challenger']
+    for label in ('1ч','3ч','6ч','12ч','24ч'):
+        x=r['checkpoints'][label]['challenger']; lines.append(f"• {label}: n={x['n']} · ROI {_pct(x['roi'])} · PnL {_money(x['pnl'])}")
+    lines += ['','⚔️ v2 TRADE → v3 SKIP (counterfactual $100)']
+    for label in ('1ч','3ч','6ч','12ч','24ч'):
+        x=r['checkpoints'][label]['v2trade_v3skip']; lines.append(f"• {label}: n={x['n']} · hypot.ROI {_pct(x['roi'])} · hypot.PnL {_money(x['pnl'])}")
+    if r['tiers_3h']:
+        lines += ['','🧪 Final v2 · 3ч по tier ($100 counterfactual)']
+        for tier,x in r['tiers_3h']:
+            pf='—' if x['profit_factor'] is None else ('∞' if x['profit_factor']==float('inf') else f"{x['profit_factor']:.2f}")
+            lines.append(f"• {tier}: n={x['n']} · ROI {_pct(x['roi'])} · PF {pf}")
+    lines += ['','ℹ️ v3/Challenger только Shadow/Paper. Live routing и Trade v2 не изменены.']
+    return '\n'.join(lines)
+
+def get_news_v2_audit()->dict[str,Any]:
+    ensure_paper_schema(); stake=float(getattr(config,'PAPER_TRADE_STAKE_USD',100.0))
+    with closing(get_connection()) as c:
+        classes=[]
+        vals=[r[0] for r in c.execute("SELECT DISTINCT news_catalyst_class FROM paper_trades WHERE news_catalyst_class IS NOT NULL AND news_catalyst_class<>''").fetchall()]
+        for klass in vals:
+            # Quote values read from our own DB before embedding in the diagnostic WHERE.
+            esc=str(klass).replace("'","''"); stats={label:_shadow_stats(c,cp,f"p.news_catalyst_class='{esc}'",str(stake)) for cp,label in CHECKPOINTS}
+            classes.append((str(klass),stats))
+        support=[]
+        vals=[r[0] for r in c.execute("SELECT DISTINCT news_outcome_support FROM paper_trades WHERE news_outcome_support IS NOT NULL AND news_outcome_support<>''").fetchall()]
+        for val in vals:
+            esc=str(val).replace("'","''"); support.append((str(val),_shadow_stats(c,180,f"p.news_outcome_support='{esc}'",str(stake))))
+        priced=[]
+        for name,where in [('LOW <30','p.news_priced_in_risk<30'),('MID 30-59','p.news_priced_in_risk>=30 AND p.news_priced_in_risk<60'),('HIGH 60+','p.news_priced_in_risk>=60')]:
+            x=_shadow_stats(c,180,where,str(stake));
+            if x['n']: priced.append((name,x))
+    return {'classes':classes,'support_3h':support,'priced_3h':priced}
+
+def format_news_v2_audit(r:dict[str,Any])->str:
+    lines=['📰 News Intelligence v2 · Performance','','$100 counterfactual · future-only','', 'Катализатор · 3ч / 24ч']
+    if not r['classes']: lines.append('Пока нет зрелых News v2 checkpoint.')
+    for klass,stats in r['classes']:
+        a=stats['3ч']; b=stats['24ч']; lines.append(f"• {klass}: 3ч n={a['n']} ROI {_pct(a['roi'])} · 24ч n={b['n']} ROI {_pct(b['roi'])}")
+    if r['support_3h']:
+        lines += ['','Направление новости · 3ч']
+        for k,x in r['support_3h']: lines.append(f"• {k}: n={x['n']} · ROI {_pct(x['roi'])}")
+    if r['priced_3h']:
+        lines += ['','Priced-in risk · 3ч']
+        for k,x in r['priced_3h']: lines.append(f"• {k}: n={x['n']} · ROI {_pct(x['roi'])}")
+    lines += ['','ℹ️ Аудит ничего не блокирует и использует только данные, замороженные при входе.']
+    return '\n'.join(lines)

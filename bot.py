@@ -43,6 +43,7 @@ from news_social_intelligence import enrich_with_news_social
 from final_signal_v2 import enrich_with_final_signal_v2
 from funnel_analytics import format_funnel
 from trade_intelligence import enrich_with_trade_intelligence
+from trade_intelligence_v3 import enrich_with_trade_v3
 from similarity_engine import analyze_similarity
 from cooldown_stats import (
     format_cooldown_dashboard,
@@ -86,6 +87,7 @@ from live_performance_tracker import get_live_performance_report, format_live_pe
 from paper_trading import (
     record_delivered_trade, get_paper_report, format_paper_report,
     get_paper_audit, format_paper_audit, get_trade_v2_audit, get_trade_v2_skip_report, format_trade_v2_audit,
+    get_trade_v3_audit, format_trade_v3_audit, get_news_v2_audit, format_news_v2_audit,
 )
 from quality_live_v2_shadow import get_report as get_quality_v2_report, format_report as format_quality_v2_report
 from score_recalibration import (
@@ -163,6 +165,7 @@ trading_keyboard = ReplyKeyboardMarkup(
     [
         ["💼 Paper Trading", "🔎 Paper Audit"],
         ["🎯 Trade v2 Audit"],
+        ["🧪 Trade v3 Audit", "📰 News v2 Audit"],
         ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
@@ -1449,6 +1452,8 @@ async def auto_scan_job(
         alert = await asyncio.to_thread(enrich_with_trade_intelligence, alert)
         # Final v2 sees News + market structure + Trade v2 context; Shadow only.
         alert = await asyncio.to_thread(enrich_with_final_signal_v2, alert)
+        # v3 is frozen after Final v2 and remains Shadow/Paper only.
+        alert = await asyncio.to_thread(enrich_with_trade_v3, alert)
         if alert.get("alert_type") == "AI_OPPORTUNITY":
             alert_text = format_opportunity(alert)
         else:
@@ -1717,6 +1722,14 @@ async def handle_buttons(
         await update.message.reply_text(format_live_performance_report(live_report), reply_markup=keyboard)
         v2_report = await asyncio.to_thread(get_quality_v2_report)
         await update.message.reply_text(format_quality_v2_report(v2_report), reply_markup=keyboard)
+
+    elif text == "🧪 Trade v3 Audit":
+        report = await asyncio.to_thread(get_trade_v3_audit)
+        await update.message.reply_text(format_trade_v3_audit(report), reply_markup=trading_keyboard)
+
+    elif text == "📰 News v2 Audit":
+        report = await asyncio.to_thread(get_news_v2_audit)
+        await update.message.reply_text(format_news_v2_audit(report), reply_markup=trading_keyboard)
 
     elif text == "💼 Paper Trading":
         report = await asyncio.to_thread(get_paper_report)
