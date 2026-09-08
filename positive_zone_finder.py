@@ -17,10 +17,10 @@ def get_positive_zones(minutes:int=180,limit:int=10000,max_zones:int=12):
                 if st['adj']>0 and st['strong']>=15:
                     zones.append({'a':a,'va':va,'b':b,'vb':vb,**st})
     zones.sort(key=lambda z:(z['adj'],z['n']),reverse=True)
-    return {'minutes':minutes,'n':len(rows),'zones':zones[:max_zones],'tested_note':'2-factor contexts; future validation required'}
+    return {'minutes':minutes,'n':len(rows),'zones':zones[:max_zones],'tested_note':'2-factor contexts; future validation required','category_mode':'v2 title reclassification'}
 
 def format_positive_zones(r):
-    lines=[f"🔎 Positive Zone Finder · {int(r['minutes']/60)}ч",f"База: {r['n']} · min zone n={MIN_ZONE_SAMPLES}",""]
+    lines=[f"🔎 Positive Zone Finder · {int(r['minutes']/60)}ч",f"База: {r['n']} · min zone n={MIN_ZONE_SAMPLES}",f"Category: {r.get('category_mode','stored')}",""]
     if not r['zones']:
         lines.append('Положительных зон с достаточной выборкой пока не найдено.')
     else:

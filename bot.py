@@ -45,6 +45,7 @@ from funnel_analytics import format_funnel
 from category_intelligence import get_category_audit, format_category_audit
 from outcome_recalibration_v2 import get_outcome_recalibration_report, format_outcome_recalibration_report
 from positive_zone_finder import get_positive_zones, format_positive_zones
+from positive_zone_shadow import get_zone_shadow_report, format_zone_shadow_report
 from trade_intelligence import enrich_with_trade_intelligence
 from trade_intelligence_v3 import enrich_with_trade_v3
 from similarity_engine import analyze_similarity
@@ -1735,6 +1736,8 @@ async def handle_buttons(
         report24 = await asyncio.to_thread(get_positive_zones, 1440, 10000, 12)
         await update.message.reply_text(format_positive_zones(report3), reply_markup=ai_keyboard)
         await update.message.reply_text(format_positive_zones(report24), reply_markup=ai_keyboard)
+        shadow = await asyncio.to_thread(get_zone_shadow_report)
+        await update.message.reply_text(format_zone_shadow_report(shadow), reply_markup=ai_keyboard)
 
     elif text == "🟢 Quality Live":
         report = await asyncio.to_thread(get_quality_live_report)

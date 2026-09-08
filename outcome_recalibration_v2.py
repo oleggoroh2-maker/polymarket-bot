@@ -68,10 +68,10 @@ def get_outcome_recalibration_report(minutes:int=180,limit:int=10000):
         stats=[(label,_stat(items)) for label,items in groups.items() if len(items)>=MIN_SAMPLES]
         stats.sort(key=lambda x:x[1]['adj'],reverse=True)
         if stats: factors.append({'name':name,'best':stats[0],'worst':stats[-1]})
-    return {'minutes':minutes,'n':len(rows),'factors':factors}
+    return {'minutes':minutes,'n':len(rows),'factors':factors,'category_mode':'v2 title reclassification'}
 
 def format_outcome_recalibration_report(r):
-    lines=[f"🧮 Outcome Recalibration v2 · {int(r['minutes']/60)}ч",f"AI Memory samples: {r['n']} · min bucket n={MIN_SAMPLES}","","Лучшие / худшие зоны · normalized outcome"]
+    lines=[f"🧮 Outcome Recalibration v2 · {int(r['minutes']/60)}ч",f"AI Memory samples: {r['n']} · min bucket n={MIN_SAMPLES}",f"Category: {r.get('category_mode','stored')}","","Лучшие / худшие зоны · normalized outcome"]
     for x in r['factors']:
         bl,bs=x['best']; wl,ws=x['worst']
         lines.append(f"• {x['name']}: 🟢 {bl} n={bs['n']} adj {bs['adj']:+.1f}% · 🔴 {wl} n={ws['n']} adj {ws['adj']:+.1f}%")

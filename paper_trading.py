@@ -12,6 +12,7 @@ import json
 import config
 from database import get_connection
 from market_regime_engine import classify_market_regime
+from positive_zone_shadow import classify_positive_zones, VERSION as POSITIVE_ZONE_VERSION
 
 CHECKPOINTS = ((60, "1ч"), (180, "3ч"), (360, "6ч"), (720, "12ч"), (1440, "24ч"))
 
@@ -48,7 +49,7 @@ def ensure_paper_schema() -> None:
         CREATE INDEX IF NOT EXISTS idx_paper_trades_opened ON paper_trades(opened_at);
         """)
         cols={r[1] for r in c.execute("PRAGMA table_info(paper_trades)").fetchall()}
-        additions={"trade_side":"TEXT", "market_regime":"TEXT", "regime_confidence":"REAL", "regime_reasons":"TEXT", "risk_stake":"REAL", "entry_quality":"REAL", "chase_risk":"REAL", "trade_intelligence_version":"TEXT", "trade_v2_decision":"TEXT", "trade_v2_skip_reasons":"TEXT", "trade_v2_exit_minutes":"INTEGER", "news_status":"TEXT", "news_score":"REAL", "news_direction":"TEXT", "news_freshest_hours":"REAL", "news_source_count":"INTEGER", "social_mentions":"INTEGER", "final_v2_score":"REAL", "final_v2_tier":"TEXT", "news_catalyst_class":"TEXT", "news_outcome_support":"TEXT", "news_source_quality":"REAL", "news_priced_in_risk":"REAL", "trade_v3_decision":"TEXT", "trade_v3_skip_reasons":"TEXT", "trade_v3_stake":"REAL", "trade_v3_version":"TEXT", "trade_v3_challenger":"INTEGER", "trade_v3_disagreement":"TEXT", "trade_v3_near_miss_score":"REAL", "trade_v3_distance_to_trade":"REAL", "trade_v3_blocker_count":"INTEGER", "trade_v3_continuation_probability":"REAL"}
+        additions={"trade_side":"TEXT", "market_regime":"TEXT", "regime_confidence":"REAL", "regime_reasons":"TEXT", "risk_stake":"REAL", "entry_quality":"REAL", "chase_risk":"REAL", "trade_intelligence_version":"TEXT", "trade_v2_decision":"TEXT", "trade_v2_skip_reasons":"TEXT", "trade_v2_exit_minutes":"INTEGER", "news_status":"TEXT", "news_score":"REAL", "news_direction":"TEXT", "news_freshest_hours":"REAL", "news_source_count":"INTEGER", "social_mentions":"INTEGER", "final_v2_score":"REAL", "final_v2_tier":"TEXT", "news_catalyst_class":"TEXT", "news_outcome_support":"TEXT", "news_source_quality":"REAL", "news_priced_in_risk":"REAL", "trade_v3_decision":"TEXT", "trade_v3_skip_reasons":"TEXT", "trade_v3_stake":"REAL", "trade_v3_version":"TEXT", "trade_v3_challenger":"INTEGER", "trade_v3_disagreement":"TEXT", "trade_v3_near_miss_score":"REAL", "trade_v3_distance_to_trade":"REAL", "trade_v3_blocker_count":"INTEGER", "trade_v3_continuation_probability":"REAL", "positive_zones_json":"TEXT", "positive_zone_version":"TEXT"}
         for name, typ in additions.items():
             if name not in cols: c.execute(f"ALTER TABLE paper_trades ADD COLUMN {name} {typ}")
         c.commit()
@@ -78,6 +79,8 @@ def record_delivered_trade(alert: dict[str, Any]) -> bool:
             float(alert.get("final_signal_score") or 0),float(alert.get("ev_estimate_percent") or 0),
             float(alert.get("risk_score") or 0),side,regime["regime"],regime["confidence"],json.dumps(regime["reasons"],ensure_ascii=False),risk_stake,entry_quality,chase_risk,ti_version,str(alert.get("trade_v2_decision") or "LEGACY"),json.dumps(alert.get("trade_v2_skip_reasons") or [],ensure_ascii=False),int(alert.get("trade_v2_exit_minutes") or 360),str(alert.get("news_status") or "UNKNOWN"),float(alert.get("news_score") or 0),str(alert.get("news_direction") or "NEUTRAL"),alert.get("news_freshest_hours"),int(alert.get("news_source_count") or 0),int(alert.get("social_mentions") or 0)))
         if cur.rowcount>0:
+            zones=classify_positive_zones(alert)
+            c.execute("UPDATE paper_trades SET positive_zones_json=?,positive_zone_version=? WHERE signal_id=?",(json.dumps(zones,ensure_ascii=False),POSITIVE_ZONE_VERSION,signal_id))
             c.execute("""UPDATE paper_trades SET final_v2_score=?,final_v2_tier=?,news_catalyst_class=?,news_outcome_support=?,news_source_quality=?,news_priced_in_risk=?,trade_v3_decision=?,trade_v3_skip_reasons=?,trade_v3_stake=?,trade_v3_version=?,trade_v3_challenger=?,trade_v3_disagreement=?,trade_v3_near_miss_score=?,trade_v3_distance_to_trade=?,trade_v3_blocker_count=?,trade_v3_continuation_probability=? WHERE signal_id=?""",(alert.get("final_v2_score"),str(alert.get("final_v2_tier") or ""),str(alert.get("news_catalyst_class") or ""),str(alert.get("news_outcome_support") or ""),alert.get("news_source_quality"),alert.get("news_priced_in_risk"),str(alert.get("trade_v3_decision") or ""),json.dumps(alert.get("trade_v3_skip_reasons") or [],ensure_ascii=False),float(alert.get("trade_v3_stake") or 0),str(alert.get("trade_v3_version") or ""),1 if alert.get("trade_v3_challenger") else 0,str(alert.get("trade_v3_disagreement") or ""),alert.get("trade_v3_near_miss_score"),alert.get("trade_v3_distance_to_trade"),int(alert.get("trade_v3_blocker_count") or 0),alert.get("trade_v3_continuation_probability"),signal_id))
         c.commit(); return cur.rowcount>0
 
