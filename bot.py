@@ -42,6 +42,9 @@ from market_structure import enrich_market_structure
 from news_social_intelligence import enrich_with_news_social
 from final_signal_v2 import enrich_with_final_signal_v2
 from funnel_analytics import format_funnel
+from category_intelligence import get_category_audit, format_category_audit
+from outcome_recalibration_v2 import get_outcome_recalibration_report, format_outcome_recalibration_report
+from positive_zone_finder import get_positive_zones, format_positive_zones
 from trade_intelligence import enrich_with_trade_intelligence
 from trade_intelligence_v3 import enrich_with_trade_v3
 from similarity_engine import analyze_similarity
@@ -155,6 +158,8 @@ ai_keyboard = ReplyKeyboardMarkup(
         ["🎯 Confidence", "💰 Price Intelligence"],
         ["📊 Feature Intelligence", "🧩 Combinations"],
         ["🎚 Score Audit", "🧭 Score Recalibration"],
+        ["🏷 Category Audit", "🧮 Outcome v2"],
+        ["🔎 Positive Zones"],
         ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
@@ -1714,6 +1719,22 @@ async def handle_buttons(
 
     elif text == "🧭 Score Recalibration":
         await score_recalibration_action(update, context)
+
+    elif text == "🏷 Category Audit":
+        report = await asyncio.to_thread(get_category_audit, 10000)
+        await update.message.reply_text(format_category_audit(report), reply_markup=ai_keyboard)
+
+    elif text == "🧮 Outcome v2":
+        report3 = await asyncio.to_thread(get_outcome_recalibration_report, 180, 10000)
+        report24 = await asyncio.to_thread(get_outcome_recalibration_report, 1440, 10000)
+        await update.message.reply_text(format_outcome_recalibration_report(report3), reply_markup=ai_keyboard)
+        await update.message.reply_text(format_outcome_recalibration_report(report24), reply_markup=ai_keyboard)
+
+    elif text == "🔎 Positive Zones":
+        report3 = await asyncio.to_thread(get_positive_zones, 180, 10000, 12)
+        report24 = await asyncio.to_thread(get_positive_zones, 1440, 10000, 12)
+        await update.message.reply_text(format_positive_zones(report3), reply_markup=ai_keyboard)
+        await update.message.reply_text(format_positive_zones(report24), reply_markup=ai_keyboard)
 
     elif text == "🟢 Quality Live":
         report = await asyncio.to_thread(get_quality_live_report)

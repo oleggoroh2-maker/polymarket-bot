@@ -224,65 +224,9 @@ def calculate_absolute_change(
 
 
 def detect_category(title: str) -> str:
-    text = title.lower()
-
-    if any(word in text for word in (
-        "bitcoin",
-        "btc",
-        "ethereum",
-        "eth",
-        "solana",
-        "xrp",
-        "dogecoin",
-        "crypto",
-    )):
-        return "₿ CRYPTO"
-
-    if any(word in text for word in (
-        "ai",
-        "openai",
-        "anthropic",
-        "chatgpt",
-        "nvidia",
-        "tesla",
-        "spacex",
-    )):
-        return "🤖 AI/TECH"
-
-    if any(word in text for word in (
-        "etf",
-        "fund",
-        "blackrock",
-        "fidelity",
-    )):
-        return "📈 ETF"
-
-    if any(word in text for word in (
-        "election",
-        "president",
-        "presidential",
-        "democratic",
-        "republican",
-        "senate",
-        "governor",
-        "congress",
-        "trump",
-    )):
-        return "🏛 POLITICS"
-
-    if any(word in text for word in (
-        "nba",
-        "nfl",
-        "nhl",
-        "mlb",
-        "football",
-        "soccer",
-        "championship",
-        "world cup",
-    )):
-        return "⚽ SPORTS"
-
-    return "📦 OTHER"
+    # v2 uses token/word boundaries; avoids false CRYPTO from "ETH" in "Elizabeth".
+    from category_intelligence import classify_category
+    return classify_category(title)
 
 
 BAD_MARKET_WORDS = (

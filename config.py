@@ -256,3 +256,11 @@ FINAL_SIGNAL_V2_SHADOW_MODE = True
 
 # Trade Intelligence v3 is shadow/paper only. It never changes Telegram routing.
 TRADE_INTELLIGENCE_V3_SHADOW_MODE = True
+
+# Category Classification v2 + outcome recalibration — analytics-safe release.
+# Category v2 fixes token-boundary false positives in NEW scans only.
+CATEGORY_CLASSIFICATION_V2_MODE = True
+OUTCOME_RECALIBRATION_V2_SHADOW_MODE = True
+POSITIVE_ZONE_FINDER_SHADOW_MODE = True
+OUTCOME_RECALIBRATION_MIN_SAMPLES = 30
+POSITIVE_ZONE_MIN_SAMPLES = 35
