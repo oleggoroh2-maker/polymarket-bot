@@ -10,6 +10,7 @@ from ai_engine import (
     get_market_metrics_before_many,
     process_scan,
 )
+from entry_discovery import process_entry_discovery
 from database import (
     cleanup_alerts,
     cleanup_prices,
@@ -662,6 +663,12 @@ def scan() -> list[dict[str, Any]]:
     # AI Engine работает в теневом режиме: ошибки внутри него
     # логируются, но не мешают основному сканированию.
     process_scan(results)
+
+    # Entry Discovery v1 is shadow-only and cannot affect scanner output.
+    try:
+        process_entry_discovery(results)
+    except Exception:
+        logger.exception("Entry Discovery shadow processing failed")
 
     categories = Counter(
         item["category"]
