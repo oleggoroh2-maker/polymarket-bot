@@ -30,7 +30,7 @@ def _cat(x):
 
 def _rows(minutes:int,limit:int=10000):
     with closing(get_connection()) as c:
-        raw=c.execute('''SELECT s.entry_price,s.liquidity,s.category,s.title,s.base_score,s.ai_quality,s.ai_risk,s.ml_probability,s.alert_type,s.metadata_json,o.directional_return_percent,o.status
+        raw=c.execute('''SELECT s.entry_price,s.liquidity,s.category,s.title,s.base_score,s.ai_quality,s.ai_risk,s.ml_probability,s.alert_type,s.metadata_json,o.directional_return_percent,o.status,s.created_at
         FROM signal_outcomes o JOIN ai_signals s ON s.signal_id=o.signal_id
         WHERE o.checkpoint_minutes=? AND o.status IS NOT NULL AND o.directional_return_percent IS NOT NULL
         ORDER BY s.created_at DESC LIMIT ?''',(minutes,limit)).fetchall()
@@ -38,7 +38,7 @@ def _rows(minutes:int,limit:int=10000):
     for r in raw:
         try:m=json.loads(r[9] or '{}')
         except:m={}
-        out.append({'price':r[0],'liq':r[1],'category':classify_category(str(r[3] or '')),'score':r[4],'q':r[5],'risk':r[6],'ml':r[7],'direction':'DIP' if 'DIP' in str(r[8]).upper() else 'PUMP','m':m,'ret':float(r[10]),'status':str(r[11])})
+        out.append({'price':r[0],'liq':r[1],'category':classify_category(str(r[3] or '')),'score':r[4],'q':r[5],'risk':r[6],'ml':r[7],'direction':'DIP' if 'DIP' in str(r[8]).upper() else 'PUMP','m':m,'ret':float(r[10]),'status':str(r[11]),'created_at':str(r[12] or '')})
     return out
 
 def _dimensions():
