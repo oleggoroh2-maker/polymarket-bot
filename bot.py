@@ -47,6 +47,7 @@ from outcome_recalibration_v2 import get_outcome_recalibration_report, format_ou
 from positive_zone_finder import get_positive_zones, format_positive_zones
 from positive_zone_shadow import get_zone_shadow_report, format_zone_shadow_report
 from zone_validation import get_walk_forward_validation, format_walk_forward_validation, get_zone_decomposition, format_zone_decomposition
+from rolling_edge_monitor import get_rolling_edge_report, format_rolling_edge_report, get_strategy_regime_report, format_strategy_regime_report
 from trade_intelligence import enrich_with_trade_intelligence
 from trade_intelligence_v3 import enrich_with_trade_v3
 from similarity_engine import analyze_similarity
@@ -162,6 +163,7 @@ ai_keyboard = ReplyKeyboardMarkup(
         ["🎚 Score Audit", "🧭 Score Recalibration"],
         ["🏷 Category Audit", "🧮 Outcome v2"],
         ["🔎 Positive Zones", "🧪 Zone Validation"],
+        ["📡 Rolling Edge"],
         ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
@@ -1745,6 +1747,12 @@ async def handle_buttons(
         dec = await asyncio.to_thread(get_zone_decomposition, 1440, 10000)
         await update.message.reply_text(format_walk_forward_validation(wf), reply_markup=ai_keyboard)
         await update.message.reply_text(format_zone_decomposition(dec), reply_markup=ai_keyboard)
+
+    elif text == "📡 Rolling Edge":
+        rolling = await asyncio.to_thread(get_rolling_edge_report, 1440, 10000)
+        regime = await asyncio.to_thread(get_strategy_regime_report, 1440, 10000)
+        await update.message.reply_text(format_rolling_edge_report(rolling), reply_markup=ai_keyboard)
+        await update.message.reply_text(format_strategy_regime_report(regime), reply_markup=ai_keyboard)
 
     elif text == "🟢 Quality Live":
         report = await asyncio.to_thread(get_quality_live_report)
