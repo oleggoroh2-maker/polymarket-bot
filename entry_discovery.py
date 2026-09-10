@@ -114,12 +114,20 @@ def process_entry_discovery(markets: list[dict[str, Any]]) -> dict[str,int]:
             if c.execute("SELECT 1 FROM entry_discovery_candidates WHERE market_id=? AND opened_at>=? LIMIT 1",(mid,cutoff)).fetchone(): continue
             candidates.append((sig["score"],m,sig))
         candidates.sort(key=lambda x:x[0],reverse=True)
+        recorded=[]
         for _,m,sig in candidates[:MAX_PER_SCAN]:
             c.execute("""INSERT INTO entry_discovery_candidates
               (market_id,title,category,side,entry_yes,opened_at,early_score,reasons_json,change_5m,change_15m,change_1h,change_24h,volume_change,liquidity_change,version)
               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (str(m.get("id")),str(m.get("title") or ""),str(m.get("category") or "OTHER"),sig["side"],_f(m.get("price")),now.isoformat(),sig["score"],json.dumps(sig["reasons"],ensure_ascii=False),m.get("change_5m"),m.get("change_15m"),m.get("change_1h"),m.get("change_24h"),sig["volume_change"],sig["liquidity_change"],VERSION)); added+=1
+            recorded.append((int(c.execute("SELECT last_insert_rowid()").fetchone()[0]),m))
         c.commit()
+    if recorded:
+        try:
+            from entry_feature_recorder import record_candidates
+            record_candidates(recorded)
+        except Exception:
+            pass
     return {"added":added,"matured":matured}
 
 
