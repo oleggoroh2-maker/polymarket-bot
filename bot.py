@@ -49,6 +49,7 @@ from positive_zone_shadow import get_zone_shadow_report, format_zone_shadow_repo
 from zone_validation import get_walk_forward_validation, format_walk_forward_validation, get_zone_decomposition, format_zone_decomposition
 from rolling_edge_monitor import get_rolling_edge_report, format_rolling_edge_report, get_strategy_regime_report, format_strategy_regime_report
 from entry_discovery import get_entry_discovery_report, format_entry_discovery_report
+from entry_discovery_intelligence import get_entry_intelligence_report, format_entry_intelligence_report
 from trade_intelligence import enrich_with_trade_intelligence
 from trade_intelligence_v3 import enrich_with_trade_v3
 from similarity_engine import analyze_similarity
@@ -165,6 +166,7 @@ ai_keyboard = ReplyKeyboardMarkup(
         ["🏷 Category Audit", "🧮 Outcome v2"],
         ["🔎 Positive Zones", "🧪 Zone Validation"],
         ["📡 Rolling Edge", "🌱 Entry Discovery"],
+        ["🧠 Entry Intel v2"],
         ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
@@ -1758,6 +1760,11 @@ async def handle_buttons(
     elif text == "🌱 Entry Discovery":
         report = await asyncio.to_thread(get_entry_discovery_report)
         await update.message.reply_text(format_entry_discovery_report(report), reply_markup=ai_keyboard)
+
+    elif text == "🧠 Entry Intel v2":
+        for cp in (180, 360, 1440):
+            report = await asyncio.to_thread(get_entry_intelligence_report, cp)
+            await update.message.reply_text(format_entry_intelligence_report(report), reply_markup=ai_keyboard)
 
     elif text == "🟢 Quality Live":
         report = await asyncio.to_thread(get_quality_live_report)

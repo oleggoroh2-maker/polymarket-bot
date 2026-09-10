@@ -666,7 +666,17 @@ def scan() -> list[dict[str, Any]]:
 
     # Entry Discovery v1 is shadow-only and cannot affect scanner output.
     try:
+        try:
+            from entry_discovery_intelligence import ensure_launch
+            ensure_launch()
+        except Exception:
+            logger.exception("Entry Discovery Intelligence init failed")
         process_entry_discovery(results)
+        try:
+            from entry_discovery_intelligence import freeze_new_candidates
+            freeze_new_candidates()
+        except Exception:
+            logger.exception("Entry Discovery Intelligence freeze failed")
     except Exception:
         logger.exception("Entry Discovery shadow processing failed")
 
