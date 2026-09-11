@@ -51,6 +51,7 @@ from rolling_edge_monitor import get_rolling_edge_report, format_rolling_edge_re
 from entry_discovery import get_entry_discovery_report, format_entry_discovery_report
 from entry_discovery_intelligence import get_entry_intelligence_report, format_entry_intelligence_report
 from entry_feature_recorder import get_feature_report, format_feature_report
+from entry_feature_intelligence_v2 import get_feature_intelligence_report, format_feature_intelligence_report
 from trade_intelligence import enrich_with_trade_intelligence
 from trade_intelligence_v3 import enrich_with_trade_v3
 from similarity_engine import analyze_similarity
@@ -168,6 +169,7 @@ ai_keyboard = ReplyKeyboardMarkup(
         ["🔎 Positive Zones", "🧪 Zone Validation"],
         ["📡 Rolling Edge", "🌱 Entry Discovery"],
         ["🧠 Entry Intel v2", "🧬 Entry Features"],
+        ["🧪 Feature Intel v2"],
         ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
@@ -1771,6 +1773,11 @@ async def handle_buttons(
         for cp in (180, 360, 1440):
             report = await asyncio.to_thread(get_feature_report, cp)
             await update.message.reply_text(format_feature_report(report), reply_markup=ai_keyboard)
+
+    elif text == "🧪 Feature Intel v2":
+        for cp in (180, 360, 1440):
+            report = await asyncio.to_thread(get_feature_intelligence_report, cp)
+            await update.message.reply_text(format_feature_intelligence_report(report), reply_markup=ai_keyboard)
 
     elif text == "🟢 Quality Live":
         report = await asyncio.to_thread(get_quality_live_report)

@@ -96,7 +96,7 @@ def record_candidates(items: list[tuple[int,dict[str,Any]]]) -> int:
                     if isinstance(book,dict): books[cid]=_book_metrics(book)
         except Exception:
             books={}
-    now=_now(); added=0
+    now=_now(); added=0; added_ids=[]
     with closing(get_connection()) as c:
         for cid,m in items:
             if c.execute("SELECT 1 FROM entry_feature_snapshots WHERE candidate_id=?",(cid,)).fetchone():continue
@@ -123,8 +123,14 @@ def record_candidates(items: list[tuple[int,dict[str,Any]]]) -> int:
                distance_1h_low_pct,distance_1h_high_pct,same_direction_count,move_age_minutes,best_bid,best_ask,spread,bid_depth,ask_depth,bid_balance,largest_order,depth_imbalance,reasons_json)
               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
               (cid,now.isoformat(),VERSION,cat,side,p,early,c5,c15,c1,c24,v5,v15,v1,accel,_f(m.get('volume_change_1h'),_f(m.get('volume_change_15m'))),_f(m.get('liquidity_change_1h'),_f(m.get('liquidity_change_15m'))),dlow,dhigh,same,_move_age(m),_f(b.get('best_bid')),_f(b.get('best_ask')),_f(b.get('spread')),bd,ad,_f(b.get('bid_balance')),_f(b.get('largest_order')),imb,reasons))
-            added+=1
+            added+=1; added_ids.append(int(cid))
         c.commit()
+    if added_ids:
+        try:
+            from entry_feature_intelligence_v2 import freeze_feature_candidates
+            freeze_feature_candidates(added_ids)
+        except Exception:
+            pass
     return added
 
 def _stats(vals):
