@@ -128,6 +128,11 @@ def process_entry_discovery(markets: list[dict[str, Any]]) -> dict[str,int]:
             record_candidates(recorded)
         except Exception:
             pass
+        try:
+            from stable_zone_shadow import freeze_stable_zone_candidates
+            freeze_stable_zone_candidates([cid for cid, _m in recorded])
+        except Exception:
+            pass
     return {"added":added,"matured":matured}
 
 

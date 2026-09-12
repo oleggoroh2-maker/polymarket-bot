@@ -55,6 +55,7 @@ from entry_feature_intelligence_v2 import (
     get_feature_intelligence_report as get_entry_feature_intelligence_v2_report,
     format_feature_intelligence_report as format_entry_feature_intelligence_v2_report,
 )
+from stable_zone_shadow import get_stable_zone_shadow_report, format_stable_zone_shadow_report
 from trade_intelligence import enrich_with_trade_intelligence
 from trade_intelligence_v3 import enrich_with_trade_v3
 from similarity_engine import analyze_similarity
@@ -172,7 +173,7 @@ ai_keyboard = ReplyKeyboardMarkup(
         ["🔎 Positive Zones", "🧪 Zone Validation"],
         ["📡 Rolling Edge", "🌱 Entry Discovery"],
         ["🧠 Entry Intel v2", "🧬 Entry Features"],
-        ["🧪 Feature Intel v2"],
+        ["🧪 Feature Intel v2", "🎯 Stable Zone"],
         ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
@@ -1781,6 +1782,10 @@ async def handle_buttons(
         for cp in (180, 360, 1440):
             report = await asyncio.to_thread(get_entry_feature_intelligence_v2_report, cp)
             await update.message.reply_text(format_entry_feature_intelligence_v2_report(report), reply_markup=ai_keyboard)
+
+    elif text == "🎯 Stable Zone":
+        report = await asyncio.to_thread(get_stable_zone_shadow_report)
+        await update.message.reply_text(format_stable_zone_shadow_report(report), reply_markup=ai_keyboard)
 
     elif text == "🟢 Quality Live":
         report = await asyncio.to_thread(get_quality_live_report)
