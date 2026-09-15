@@ -57,6 +57,10 @@ from entry_feature_intelligence_v2 import (
 )
 from stable_zone_shadow import get_stable_zone_shadow_report, format_stable_zone_shadow_report
 from candidate_validation_v2 import get_candidate_validation_v2_report, format_candidate_validation_v2_report
+from stable_zone_challenger_v2 import (
+    get_stable_zone_challenger_v2_report,
+    format_stable_zone_challenger_v2_report,
+)
 from trade_intelligence import enrich_with_trade_intelligence
 from trade_intelligence_v3 import enrich_with_trade_v3
 from similarity_engine import analyze_similarity
@@ -175,7 +179,7 @@ ai_keyboard = ReplyKeyboardMarkup(
         ["📡 Rolling Edge", "🌱 Entry Discovery"],
         ["🧠 Entry Intel v2", "🧬 Entry Features"],
         ["🧪 Feature Intel v2", "🎯 Stable Zone"],
-        ["🛡 Candidate Validation"],
+        ["🛡 Candidate Validation", "🚀 Zone Challenger"],
         ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
@@ -1792,6 +1796,10 @@ async def handle_buttons(
     elif text == "🛡 Candidate Validation":
         report = await asyncio.to_thread(get_candidate_validation_v2_report)
         await update.message.reply_text(format_candidate_validation_v2_report(report), reply_markup=ai_keyboard)
+
+    elif text == "🚀 Zone Challenger":
+        report = await asyncio.to_thread(get_stable_zone_challenger_v2_report)
+        await update.message.reply_text(format_stable_zone_challenger_v2_report(report), reply_markup=ai_keyboard)
 
     elif text == "🟢 Quality Live":
         report = await asyncio.to_thread(get_quality_live_report)

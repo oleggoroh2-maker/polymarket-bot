@@ -131,6 +131,11 @@ def record_candidates(items: list[tuple[int,dict[str,Any]]]) -> int:
             freeze_feature_candidates(added_ids)
         except Exception:
             pass
+        try:
+            from stable_zone_challenger_v2 import freeze_challenger_candidates
+            freeze_challenger_candidates(added_ids)
+        except Exception:
+            pass
     return added
 
 def _stats(vals):
