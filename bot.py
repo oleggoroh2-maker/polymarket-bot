@@ -65,6 +65,10 @@ from pilot_readiness_audit_v1 import (
     get_pilot_readiness_audit_v1_report,
     format_pilot_readiness_audit_v1_report,
 )
+from pilot_engine_v1 import (
+    get_pilot_engine_v1_report,
+    format_pilot_engine_v1_report,
+)
 from trade_intelligence import enrich_with_trade_intelligence
 from trade_intelligence_v3 import enrich_with_trade_v3
 from similarity_engine import analyze_similarity
@@ -184,7 +188,8 @@ ai_keyboard = ReplyKeyboardMarkup(
         ["🧠 Entry Intel v2", "🧬 Entry Features"],
         ["🧪 Feature Intel v2", "🎯 Stable Zone"],
         ["🛡 Candidate Validation", "🚀 Zone Challenger"],
-        ["🧾 Pilot Readiness", "⬅️ Главное меню"],
+        ["🧾 Pilot Readiness", "🧪 Pilot Engine"],
+        ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -1808,6 +1813,10 @@ async def handle_buttons(
     elif text == "🧾 Pilot Readiness":
         report = await asyncio.to_thread(get_pilot_readiness_audit_v1_report)
         await update.message.reply_text(format_pilot_readiness_audit_v1_report(report), reply_markup=ai_keyboard)
+
+    elif text == "🧪 Pilot Engine":
+        report = await asyncio.to_thread(get_pilot_engine_v1_report)
+        await update.message.reply_text(format_pilot_engine_v1_report(report), reply_markup=ai_keyboard)
 
     elif text == "🟢 Quality Live":
         report = await asyncio.to_thread(get_quality_live_report)
