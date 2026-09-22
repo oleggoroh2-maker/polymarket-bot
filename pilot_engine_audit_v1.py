@@ -14,6 +14,25 @@ from pilot_engine_v1 import VERSION, HORIZON_MINUTES
 
 CHECKPOINTS=(180,360,720,1440)
 
+# Diagnostic buckets are intentionally read-only. They use the frozen entry
+# features already stored with every Pilot decision and never affect eligibility.
+FEATURE_BUCKETS = {
+    "Price": [
+        ("20–29¢", "d.entry_yes>=0.20 AND d.entry_yes<0.30"),
+        ("30–39¢", "d.entry_yes>=0.30 AND d.entry_yes<0.40"),
+        ("40–50¢", "d.entry_yes>=0.40 AND d.entry_yes<=0.50"),
+    ],
+    "Early": [
+        ("60–64", "d.early_score>=60 AND d.early_score<65"),
+        ("65–69", "d.early_score>=65 AND d.early_score<=69"),
+    ],
+    "Accel": [
+        ("0.05–0.10", "d.acceleration>0.05 AND d.acceleration<0.10"),
+        ("0.10–0.20", "d.acceleration>=0.10 AND d.acceleration<0.20"),
+        ("≥0.20", "d.acceleration>=0.20"),
+    ],
+}
+
 
 def _stats(vals):
     vals=[float(x) for x in vals]
@@ -58,7 +77,21 @@ def get_pilot_engine_audit_v1_report():
           WHERE d.version=? AND d.action='TRADE' AND d.decided_at<? AND o.candidate_id IS NULL''',(HORIZON_MINUTES,VERSION,cutoff)).fetchone()[0] or 0)
         totals=dict(c.execute("SELECT action,COUNT(*) FROM pilot_engine_v1_decisions WHERE version=? GROUP BY action",(VERSION,)).fetchall())
         skip_total=int(c.execute("SELECT COUNT(*) FROM pilot_engine_v1_decisions WHERE version=? AND action='SKIP' AND reason='MAX_OPEN_POSITIONS'",(VERSION,)).fetchone()[0] or 0)
-    return {'stats':out,'peak':peak,'peak_at':peak_at,'active':active,'stale_missing_24h':stale,'totals':totals,'skip_max':skip_total}
+
+        # 24h feature diagnostic across decisions that were otherwise eligible:
+        # actual TRADE + candidates blocked only by MAX_OPEN. This avoids treating
+        # the concurrency gate as a feature-quality signal.
+        feature_stats={}
+        eligible_where="(d.action='TRADE' OR (d.action='SKIP' AND d.reason='MAX_OPEN_POSITIONS'))"
+        for feature,buckets in FEATURE_BUCKETS.items():
+            feature_stats[feature]=[]
+            for bucket,clause in buckets:
+                vals=[r[0] for r in c.execute(f'''SELECT o.roi FROM pilot_engine_v1_decisions d
+                    JOIN entry_discovery_outcomes o ON o.candidate_id=d.candidate_id
+                    WHERE d.version=? AND {eligible_where} AND o.checkpoint_minutes=? AND {clause}
+                    ORDER BY d.decided_at,d.candidate_id''',(VERSION,HORIZON_MINUTES)).fetchall()]
+                feature_stats[feature].append((bucket,_stats(vals)))
+    return {'stats':out,'peak':peak,'peak_at':peak_at,'active':active,'stale_missing_24h':stale,'totals':totals,'skip_max':skip_total,'feature_stats':feature_stats}
 
 
 def _pct(v):return '—' if v is None else f'{v:+.1f}%'
@@ -73,6 +106,11 @@ def format_pilot_engine_audit_v1_report(r):
     for cp,name in [(180,'3ч'),(360,'6ч'),(720,'12ч'),(1440,'24ч')]:
         lines += [f'⏱ {name}',_line('TRADE',r['stats'][('TRADE',cp)]),_line('SKIP MAX_OPEN',r['stats'][('SKIP_MAX_OPEN',cp)]),'']
     pa='—' if r['peak_at'] is None else r['peak_at'].strftime('%d.%m %H:%M UTC')
-    lines += ['🧮 Concurrency audit',f"• Peak 24ч concurrent TRADE: {r['peak']} (at {pa})",f"• Active by 24ч window now: {r['active']}",f"• >24ч без записанного 24ч outcome: {r['stale_missing_24h']}",f"• Decisions: TRADE {int(r['totals'].get('TRADE',0))} · MAX_OPEN SKIP {r['skip_max']}",'',
-              'ℹ️ Аудит ничего не меняет в Pilot. SKIP — counterfactual: что произошло бы с пропущенными кандидатами на тех же горизонтах.']
+    lines += ['🧮 Concurrency audit',f"• Peak 24ч concurrent TRADE: {r['peak']} (at {pa})",f"• Active by 24ч window now: {r['active']}",f"• >24ч без записанного 24ч outcome: {r['stale_missing_24h']}",f"• Decisions: TRADE {int(r['totals'].get('TRADE',0))} · MAX_OPEN SKIP {r['skip_max']}",'']
+    lines += ['🧬 24ч feature diagnostic · TRADE + MAX_OPEN']
+    for feature in ('Price','Early','Accel'):
+        lines.append(f'• {feature}:')
+        for bucket,s in r.get('feature_stats',{}).get(feature,[]):
+            lines.append(f"  {bucket}: n={s['n']} · ROI {_pct(s['roi'])} · PF {_pf(s['pf'])} · Win {_pct(s['win'])}")
+    lines += ['', 'ℹ️ Аудит ничего не меняет в Pilot. Feature diagnostic тоже READ-ONLY; SKIP — counterfactual: что произошло бы с пропущенными кандидатами на тех же горизонтах.']
     return '\n'.join(lines)
