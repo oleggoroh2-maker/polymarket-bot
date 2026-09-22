@@ -42,6 +42,17 @@ def _stats(vals):
             'win':100*sum(x>0 for x in vals)/len(vals),'median':median(vals)}
 
 
+def _distribution(vals):
+    vals=sorted(float(x) for x in vals if x is not None)
+    if not vals:
+        return {'n':0,'min':None,'median':None,'max':None,'q1':None,'q3':None}
+    def q(frac):
+        if len(vals)==1:return vals[0]
+        pos=(len(vals)-1)*frac; lo=int(pos); hi=min(lo+1,len(vals)-1); w=pos-lo
+        return vals[lo]*(1-w)+vals[hi]*w
+    return {'n':len(vals),'min':vals[0],'median':median(vals),'max':vals[-1],'q1':q(.25),'q3':q(.75)}
+
+
 def _peak_concurrency(rows):
     events=[]
     for cid,ts in rows:
@@ -91,7 +102,27 @@ def get_pilot_engine_audit_v1_report():
                     WHERE d.version=? AND {eligible_where} AND o.checkpoint_minutes=? AND {clause}
                     ORDER BY d.decided_at,d.candidate_id''',(VERSION,HORIZON_MINUTES)).fetchall()]
                 feature_stats[feature].append((bucket,_stats(vals)))
-    return {'stats':out,'peak':peak,'peak_at':peak_at,'active':active,'stale_missing_24h':stale,'totals':totals,'skip_max':skip_total,'feature_stats':feature_stats}
+
+        # Raw acceleration scale: diagnostic only, so bucket boundaries can be
+        # chosen from observed values instead of assumptions about units.
+        accel_vals=[r[0] for r in c.execute(f'''SELECT d.acceleration FROM pilot_engine_v1_decisions d
+            JOIN entry_discovery_outcomes o ON o.candidate_id=d.candidate_id
+            WHERE d.version=? AND {eligible_where} AND o.checkpoint_minutes=?
+            ORDER BY d.acceleration''',(VERSION,HORIZON_MINUTES)).fetchall()]
+        accel_distribution=_distribution(accel_vals)
+
+        # Interaction diagnostic: price can behave differently at the two Early bands.
+        interaction_stats=[]
+        price_buckets=FEATURE_BUCKETS['Price']; early_buckets=FEATURE_BUCKETS['Early']
+        for p_name,p_clause in price_buckets:
+            for e_name,e_clause in early_buckets:
+                vals=[r[0] for r in c.execute(f'''SELECT o.roi FROM pilot_engine_v1_decisions d
+                    JOIN entry_discovery_outcomes o ON o.candidate_id=d.candidate_id
+                    WHERE d.version=? AND {eligible_where} AND o.checkpoint_minutes=?
+                      AND {p_clause} AND {e_clause}
+                    ORDER BY d.decided_at,d.candidate_id''',(VERSION,HORIZON_MINUTES)).fetchall()]
+                interaction_stats.append((f'{p_name} × Early {e_name}',_stats(vals)))
+    return {'stats':out,'peak':peak,'peak_at':peak_at,'active':active,'stale_missing_24h':stale,'totals':totals,'skip_max':skip_total,'feature_stats':feature_stats,'accel_distribution':accel_distribution,'interaction_stats':interaction_stats}
 
 
 def _pct(v):return '—' if v is None else f'{v:+.1f}%'
@@ -112,5 +143,12 @@ def format_pilot_engine_audit_v1_report(r):
         lines.append(f'• {feature}:')
         for bucket,s in r.get('feature_stats',{}).get(feature,[]):
             lines.append(f"  {bucket}: n={s['n']} · ROI {_pct(s['roi'])} · PF {_pf(s['pf'])} · Win {_pct(s['win'])}")
+    ad=r.get('accel_distribution',{})
+    def _num(v): return '—' if v is None else f'{v:.4f}'
+    lines += ['', '📐 Acceleration scale · 24ч sample',
+              f"• n={ad.get('n',0)} · min {_num(ad.get('min'))} · Q1 {_num(ad.get('q1'))} · median {_num(ad.get('median'))} · Q3 {_num(ad.get('q3'))} · max {_num(ad.get('max'))}",
+              '', '🧩 Price × Early · 24ч']
+    for label,s in r.get('interaction_stats',[]):
+        lines.append(f"• {label}: n={s['n']} · ROI {_pct(s['roi'])} · PF {_pf(s['pf'])} · Win {_pct(s['win'])}")
     lines += ['', 'ℹ️ Аудит ничего не меняет в Pilot. Feature diagnostic тоже READ-ONLY; SKIP — counterfactual: что произошло бы с пропущенными кандидатами на тех же горизонтах.']
     return '\n'.join(lines)
