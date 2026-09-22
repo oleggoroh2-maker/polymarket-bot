@@ -95,8 +95,8 @@ def _risk_reason(c, decided_at: datetime) -> str | None:
     day_start = decided_at.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     daily = int(c.execute("""
       SELECT COUNT(*) FROM pilot_engine_v1_decisions
-      WHERE version=? AND action='TRADE' AND decided_at>=?
-    """, (VERSION, day_start)).fetchone()[0] or 0)
+      WHERE version=? AND action='TRADE' AND decided_at>=? AND decided_at<=?
+    """, (VERSION, day_start, decided_at.isoformat())).fetchone()[0] or 0)
     if daily >= int(_cfg("PILOT_MAX_NEW_TRADES_PER_DAY", 8)):
         return "DAILY_LIMIT"
 
@@ -105,8 +105,8 @@ def _risk_reason(c, decided_at: datetime) -> str | None:
       SELECT COUNT(*) FROM pilot_engine_v1_decisions d
       LEFT JOIN entry_discovery_outcomes o
         ON o.candidate_id=d.candidate_id AND o.checkpoint_minutes=?
-      WHERE d.version=? AND d.action='TRADE' AND d.decided_at>=? AND o.candidate_id IS NULL
-    """, (HORIZON_MINUTES, VERSION, open_cutoff)).fetchone()[0] or 0)
+      WHERE d.version=? AND d.action='TRADE' AND d.decided_at>=? AND d.decided_at<=? AND o.candidate_id IS NULL
+    """, (HORIZON_MINUTES, VERSION, open_cutoff, decided_at.isoformat())).fetchone()[0] or 0)
     if open_count >= int(_cfg("PILOT_MAX_OPEN_POSITIONS", 5)):
         return "MAX_OPEN_POSITIONS"
     return None
@@ -184,11 +184,13 @@ def get_pilot_engine_v1_report() -> dict:
           WHERE d.version=? AND d.action='TRADE' AND o.checkpoint_minutes=?
           ORDER BY d.decided_at,d.candidate_id
         """, (VERSION, HORIZON_MINUTES)).fetchall()
+        now_iso = _iso(_now())
+        open_cutoff = _iso(_now() - timedelta(minutes=HORIZON_MINUTES))
         open_n = int(c.execute("""
           SELECT COUNT(*) FROM pilot_engine_v1_decisions d
           LEFT JOIN entry_discovery_outcomes o ON o.candidate_id=d.candidate_id AND o.checkpoint_minutes=?
-          WHERE d.version=? AND d.action='TRADE' AND o.candidate_id IS NULL
-        """, (HORIZON_MINUTES, VERSION)).fetchone()[0] or 0)
+          WHERE d.version=? AND d.action='TRADE' AND d.decided_at>=? AND d.decided_at<=? AND o.candidate_id IS NULL
+        """, (HORIZON_MINUTES, VERSION, open_cutoff, now_iso)).fetchone()[0] or 0)
         recent = c.execute("""
           SELECT e.title,d.action,d.reason,d.entry_yes,d.stake
           FROM pilot_engine_v1_decisions d JOIN entry_discovery_candidates e ON e.id=d.candidate_id
