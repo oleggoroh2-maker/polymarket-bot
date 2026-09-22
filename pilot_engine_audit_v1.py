@@ -111,6 +111,42 @@ def get_pilot_engine_audit_v1_report():
             ORDER BY d.acceleration''',(VERSION,HORIZON_MINUTES)).fetchall()]
         accel_distribution=_distribution(accel_vals)
 
+        # Quartile-based acceleration buckets from the observed 24h sample.
+        # These are READ-ONLY and deliberately derived from the sample so the
+        # diagnostic matches the feature's real scale.
+        accel_bucket_stats=[]
+        accel_early_stats=[]
+        accel_price_stats=[]
+        ad=accel_distribution
+        if ad['n']:
+            q1,med,q3=ad['q1'],ad['median'],ad['q3']
+            accel_buckets=[
+                (f'<{q1:.4f}', f'd.acceleration<{q1:.12g}'),
+                (f'{q1:.4f}–{med:.4f}', f'd.acceleration>={q1:.12g} AND d.acceleration<{med:.12g}'),
+                (f'{med:.4f}–{q3:.4f}', f'd.acceleration>={med:.12g} AND d.acceleration<{q3:.12g}'),
+                (f'≥{q3:.4f}', f'd.acceleration>={q3:.12g}'),
+            ]
+            for a_name,a_clause in accel_buckets:
+                vals=[r[0] for r in c.execute(f'''SELECT o.roi FROM pilot_engine_v1_decisions d
+                    JOIN entry_discovery_outcomes o ON o.candidate_id=d.candidate_id
+                    WHERE d.version=? AND {eligible_where} AND o.checkpoint_minutes=? AND {a_clause}
+                    ORDER BY d.decided_at,d.candidate_id''',(VERSION,HORIZON_MINUTES)).fetchall()]
+                accel_bucket_stats.append((a_name,_stats(vals)))
+                for e_name,e_clause in FEATURE_BUCKETS['Early']:
+                    vals=[r[0] for r in c.execute(f'''SELECT o.roi FROM pilot_engine_v1_decisions d
+                        JOIN entry_discovery_outcomes o ON o.candidate_id=d.candidate_id
+                        WHERE d.version=? AND {eligible_where} AND o.checkpoint_minutes=?
+                          AND {a_clause} AND {e_clause}
+                        ORDER BY d.decided_at,d.candidate_id''',(VERSION,HORIZON_MINUTES)).fetchall()]
+                    accel_early_stats.append((f'{a_name} × Early {e_name}',_stats(vals)))
+                for p_name,p_clause in FEATURE_BUCKETS['Price']:
+                    vals=[r[0] for r in c.execute(f'''SELECT o.roi FROM pilot_engine_v1_decisions d
+                        JOIN entry_discovery_outcomes o ON o.candidate_id=d.candidate_id
+                        WHERE d.version=? AND {eligible_where} AND o.checkpoint_minutes=?
+                          AND {a_clause} AND {p_clause}
+                        ORDER BY d.decided_at,d.candidate_id''',(VERSION,HORIZON_MINUTES)).fetchall()]
+                    accel_price_stats.append((f'{a_name} × {p_name}',_stats(vals)))
+
         # Interaction diagnostic: price can behave differently at the two Early bands.
         interaction_stats=[]
         price_buckets=FEATURE_BUCKETS['Price']; early_buckets=FEATURE_BUCKETS['Early']
@@ -122,7 +158,7 @@ def get_pilot_engine_audit_v1_report():
                       AND {p_clause} AND {e_clause}
                     ORDER BY d.decided_at,d.candidate_id''',(VERSION,HORIZON_MINUTES)).fetchall()]
                 interaction_stats.append((f'{p_name} × Early {e_name}',_stats(vals)))
-    return {'stats':out,'peak':peak,'peak_at':peak_at,'active':active,'stale_missing_24h':stale,'totals':totals,'skip_max':skip_total,'feature_stats':feature_stats,'accel_distribution':accel_distribution,'interaction_stats':interaction_stats}
+    return {'stats':out,'peak':peak,'peak_at':peak_at,'active':active,'stale_missing_24h':stale,'totals':totals,'skip_max':skip_total,'feature_stats':feature_stats,'accel_distribution':accel_distribution,'interaction_stats':interaction_stats,'accel_bucket_stats':accel_bucket_stats,'accel_early_stats':accel_early_stats,'accel_price_stats':accel_price_stats}
 
 
 def _pct(v):return '—' if v is None else f'{v:+.1f}%'
