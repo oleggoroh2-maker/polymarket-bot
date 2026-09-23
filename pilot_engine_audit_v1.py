@@ -147,6 +147,22 @@ def get_pilot_engine_audit_v1_report():
                         ORDER BY d.decided_at,d.candidate_id''',(VERSION,HORIZON_MINUTES)).fetchall()]
                     accel_price_stats.append((f'{a_name} × {p_name}',_stats(vals)))
 
+        # Diagnostic v4: follow the SAME acceleration buckets across every
+        # outcome horizon. Boundaries stay frozen to the observed 24h sample,
+        # while only the future checkpoint changes. READ-ONLY.
+        accel_time_stats=[]
+        if ad['n']:
+            for a_name,a_clause in accel_buckets:
+                horizon_rows=[]
+                for cp in CHECKPOINTS:
+                    vals=[r[0] for r in c.execute(f'''SELECT o.roi FROM pilot_engine_v1_decisions d
+                        JOIN entry_discovery_outcomes o ON o.candidate_id=d.candidate_id
+                        WHERE d.version=? AND {eligible_where} AND o.checkpoint_minutes=?
+                          AND {a_clause}
+                        ORDER BY d.decided_at,d.candidate_id''',(VERSION,cp)).fetchall()]
+                    horizon_rows.append((cp,_stats(vals)))
+                accel_time_stats.append((a_name,horizon_rows))
+
         # Interaction diagnostic: price can behave differently at the two Early bands.
         interaction_stats=[]
         price_buckets=FEATURE_BUCKETS['Price']; early_buckets=FEATURE_BUCKETS['Early']
@@ -158,7 +174,7 @@ def get_pilot_engine_audit_v1_report():
                       AND {p_clause} AND {e_clause}
                     ORDER BY d.decided_at,d.candidate_id''',(VERSION,HORIZON_MINUTES)).fetchall()]
                 interaction_stats.append((f'{p_name} × Early {e_name}',_stats(vals)))
-    return {'stats':out,'peak':peak,'peak_at':peak_at,'active':active,'stale_missing_24h':stale,'totals':totals,'skip_max':skip_total,'feature_stats':feature_stats,'accel_distribution':accel_distribution,'interaction_stats':interaction_stats,'accel_bucket_stats':accel_bucket_stats,'accel_early_stats':accel_early_stats,'accel_price_stats':accel_price_stats}
+    return {'stats':out,'peak':peak,'peak_at':peak_at,'active':active,'stale_missing_24h':stale,'totals':totals,'skip_max':skip_total,'feature_stats':feature_stats,'accel_distribution':accel_distribution,'interaction_stats':interaction_stats,'accel_bucket_stats':accel_bucket_stats,'accel_early_stats':accel_early_stats,'accel_price_stats':accel_price_stats,'accel_time_stats':accel_time_stats}
 
 
 def _pct(v):return '—' if v is None else f'{v:+.1f}%'
@@ -198,6 +214,13 @@ def format_pilot_engine_audit_v1_report(r):
     lines += ['', '🔎 Acceleration × Price · 24ч']
     for label,s in r.get('accel_price_stats',[]):
         lines.append(f"• {label}: n={s['n']} · ROI {_pct(s['roi'])} · PF {_pf(s['pf'])} · Win {_pct(s['win'])}")
+
+    lines += ['', '⏳ Acceleration × Time · same entry cohorts']
+    cp_names={180:'3ч',360:'6ч',720:'12ч',1440:'24ч'}
+    for label,horizons in r.get('accel_time_stats',[]):
+        lines.append(f'• Accel {label}:')
+        for cp,s in horizons:
+            lines.append(f"  {cp_names.get(cp,str(cp))}: n={s['n']} · ROI {_pct(s['roi'])} · PF {_pf(s['pf'])} · Win {_pct(s['win'])} · Med {_pct(s['median'])}")
 
     lines += ['', 'ℹ️ Аудит ничего не меняет в Pilot. Feature diagnostic тоже READ-ONLY; SKIP — counterfactual: что произошло бы с пропущенными кандидатами на тех же горизонтах.']
     return '\n'.join(lines)
