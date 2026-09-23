@@ -1825,7 +1825,26 @@ async def handle_buttons(
 
     elif text == "🔬 Pilot Audit":
         report = await asyncio.to_thread(get_pilot_engine_audit_v1_report)
-        await update.message.reply_text(format_pilot_engine_audit_v1_report(report), reply_markup=ai_keyboard)
+        audit_text = format_pilot_engine_audit_v1_report(report)
+        # Telegram limits a single message to 4096 characters. Split the audit
+        # on line boundaries so growing READ-ONLY diagnostics remain usable.
+        max_len = 3800
+        chunks = []
+        current = []
+        current_len = 0
+        for line in audit_text.splitlines():
+            add_len = len(line) + (1 if current else 0)
+            if current and current_len + add_len > max_len:
+                chunks.append("\n".join(current))
+                current = [line]
+                current_len = len(line)
+            else:
+                current.append(line)
+                current_len += add_len
+        if current:
+            chunks.append("\n".join(current))
+        for chunk in chunks:
+            await update.message.reply_text(chunk, reply_markup=ai_keyboard)
 
     elif text == "🟢 Quality Live":
         report = await asyncio.to_thread(get_quality_live_report)
