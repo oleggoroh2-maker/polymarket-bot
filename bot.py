@@ -69,6 +69,10 @@ from pilot_engine_v1 import (
     get_pilot_engine_v1_report,
     format_pilot_engine_v1_report,
 )
+from pilot_engine_v2 import (
+    get_pilot_engine_v2_report,
+    format_pilot_engine_v2_report,
+)
 from pilot_engine_audit_v1 import (
     get_pilot_engine_audit_v1_report,
     format_pilot_engine_audit_v1_report,
@@ -193,7 +197,7 @@ ai_keyboard = ReplyKeyboardMarkup(
         ["🧪 Feature Intel v2", "🎯 Stable Zone"],
         ["🛡 Candidate Validation", "🚀 Zone Challenger"],
         ["🧾 Pilot Readiness", "🧪 Pilot Engine"],
-        ["🔬 Pilot Audit"],
+        ["🧪 Pilot v2", "🔬 Pilot Audit"],
         ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
@@ -1822,6 +1826,10 @@ async def handle_buttons(
     elif text == "🧪 Pilot Engine":
         report = await asyncio.to_thread(get_pilot_engine_v1_report)
         await update.message.reply_text(format_pilot_engine_v1_report(report), reply_markup=ai_keyboard)
+
+    elif text == "🧪 Pilot v2":
+        report = await asyncio.to_thread(get_pilot_engine_v2_report)
+        await update.message.reply_text(format_pilot_engine_v2_report(report), reply_markup=ai_keyboard)
 
     elif text == "🔬 Pilot Audit":
         report = await asyncio.to_thread(get_pilot_engine_audit_v1_report)

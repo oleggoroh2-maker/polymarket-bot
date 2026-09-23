@@ -141,6 +141,11 @@ def record_candidates(items: list[tuple[int,dict[str,Any]]]) -> int:
             process_pilot_candidates(added_ids)
         except Exception:
             pass
+        try:
+            from pilot_engine_v2 import process_pilot_v2_candidates
+            process_pilot_v2_candidates(added_ids)
+        except Exception:
+            pass
     return added
 
 def _stats(vals):
