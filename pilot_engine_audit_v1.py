@@ -186,5 +186,18 @@ def format_pilot_engine_audit_v1_report(r):
               '', '🧩 Price × Early · 24ч']
     for label,s in r.get('interaction_stats',[]):
         lines.append(f"• {label}: n={s['n']} · ROI {_pct(s['roi'])} · PF {_pf(s['pf'])} · Win {_pct(s['win'])}")
+
+    lines += ['', '⚡ Acceleration quartiles · 24ч']
+    for label,s in r.get('accel_bucket_stats',[]):
+        lines.append(f"• {label}: n={s['n']} · ROI {_pct(s['roi'])} · PF {_pf(s['pf'])} · Win {_pct(s['win'])}")
+
+    lines += ['', '🧪 Acceleration × Early · 24ч']
+    for label,s in r.get('accel_early_stats',[]):
+        lines.append(f"• {label}: n={s['n']} · ROI {_pct(s['roi'])} · PF {_pf(s['pf'])} · Win {_pct(s['win'])}")
+
+    lines += ['', '🔎 Acceleration × Price · 24ч']
+    for label,s in r.get('accel_price_stats',[]):
+        lines.append(f"• {label}: n={s['n']} · ROI {_pct(s['roi'])} · PF {_pf(s['pf'])} · Win {_pct(s['win'])}")
+
     lines += ['', 'ℹ️ Аудит ничего не меняет в Pilot. Feature diagnostic тоже READ-ONLY; SKIP — counterfactual: что произошло бы с пропущенными кандидатами на тех же горизонтах.']
     return '\n'.join(lines)
