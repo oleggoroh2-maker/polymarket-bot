@@ -178,6 +178,17 @@ def get_pilot_engine_v1_report() -> dict:
           SELECT reason,COUNT(*) FROM pilot_engine_v1_decisions
           WHERE version=? AND action='SKIP' GROUP BY reason ORDER BY COUNT(*) DESC
         """, (VERSION,)).fetchall()
+        # Dashboard analytics are read-only: expose the same 3h/6h/12h/24h
+        # outcome shape as Pilot v2 without changing Pilot v1 decision logic.
+        horizons = {}
+        for checkpoint in (180, 360, 720, 1440):
+            checkpoint_rows = c.execute("""
+              SELECT d.stake,o.roi FROM pilot_engine_v1_decisions d
+              JOIN entry_discovery_outcomes o ON o.candidate_id=d.candidate_id
+              WHERE d.version=? AND d.action='TRADE' AND o.checkpoint_minutes=?
+              ORDER BY d.decided_at,d.candidate_id
+            """, (VERSION, checkpoint)).fetchall()
+            horizons[checkpoint] = _stats(checkpoint_rows)
         rows = c.execute("""
           SELECT d.stake,o.roi FROM pilot_engine_v1_decisions d
           JOIN entry_discovery_outcomes o ON o.candidate_id=d.candidate_id
@@ -192,14 +203,14 @@ def get_pilot_engine_v1_report() -> dict:
           WHERE d.version=? AND d.action='TRADE' AND d.decided_at>=? AND d.decided_at<=? AND o.candidate_id IS NULL
         """, (HORIZON_MINUTES, VERSION, open_cutoff, now_iso)).fetchone()[0] or 0)
         recent = c.execute("""
-          SELECT e.title,d.action,d.reason,d.entry_yes,d.stake
+          SELECT e.title,d.action,d.reason,d.entry_yes,d.acceleration,d.stake
           FROM pilot_engine_v1_decisions d JOIN entry_discovery_candidates e ON e.id=d.candidate_id
           WHERE d.version=? ORDER BY d.candidate_id DESC LIMIT 5
         """, (VERSION,)).fetchall()
     s = _stats(rows)
     kill = s["max_dd"] >= float(_cfg("PILOT_MAX_DRAWDOWN_USD", 100.0))
-    return {"launch": launch, "counts": counts, "reasons": reasons, "stats": s, "open": open_n,
-            "recent": recent, "kill": kill}
+    return {"launch": launch, "counts": counts, "reasons": reasons, "stats": s,
+            "horizons": horizons, "open": open_n, "recent": recent, "kill": kill}
 
 
 def _pct(v): return "—" if v is None else f"{v:+.1f}%"
@@ -225,7 +236,7 @@ def format_pilot_engine_v1_report(r: dict) -> str:
         for reason, n in r["reasons"][:5]: lines.append(f"• {reason}: {n}")
     if r["recent"]:
         lines += ["", "Последние решения:"]
-        for title, action, reason, price, stake in r["recent"]:
+        for title, action, reason, price, _accel, stake in r["recent"]:
             t = str(title); t = t if len(t) <= 52 else t[:51] + "…"
             lines.append(f"• {action} · {float(price)*100:.1f}¢ · ${float(stake):.0f} · {reason} · {t}")
     lines += ["", "ℹ️ Реальные ордера НЕ отправляются. Это future-only PAPER pilot с production-style risk limits; Live/Trade не меняются."]
