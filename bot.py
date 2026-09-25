@@ -15,6 +15,7 @@ from telegram.ext import (
 )
 
 import config
+from readonly_api import start_readonly_api
 from ai_engine import ensure_ai_schema, get_ai_stats
 from database import (
     add_favorite_event,
@@ -2010,6 +2011,7 @@ async def database_vacuum_job(
 def main() -> None:
     init_db()
     ensure_ai_schema()
+    start_readonly_api()
 
     if config.CHAT_ID is not None:
         add_subscriber(config.CHAT_ID)
