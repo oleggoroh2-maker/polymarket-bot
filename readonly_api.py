@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pilot_engine_v1 import get_pilot_engine_v1_report
 from pilot_engine_v2 import get_pilot_engine_v2_report
 from pilot_engine_audit_v1 import get_pilot_engine_audit_v1_report
+from pilot_engine_audit_v2 import get_pilot_engine_audit_v2_report
 
 logger = logging.getLogger(__name__)
 DASHBOARD_PATH = Path(__file__).with_name("dashboard.html")
@@ -62,7 +63,7 @@ class ReadOnlyAPIHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(raw)
             return
-        if path not in {"/api/status", "/api/pilot/v1", "/api/pilot/v2", "/api/pilot/audit"}:
+        if path not in {"/api/status", "/api/pilot/v1", "/api/pilot/v2", "/api/pilot/audit", "/api/pilot/v2/audit"}:
             self._send(404, {"ok": False, "error": "not_found"})
             return
         try:
@@ -71,12 +72,14 @@ class ReadOnlyAPIHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "service": "polymarket-bot-read-only",
                     "time_utc": datetime.now(timezone.utc).isoformat(),
-                    "endpoints": ["/dashboard", "/api/status", "/api/pilot/v1", "/api/pilot/v2", "/api/pilot/audit"],
+                    "endpoints": ["/dashboard", "/api/status", "/api/pilot/v1", "/api/pilot/v2", "/api/pilot/audit", "/api/pilot/v2/audit"],
                 }
             elif path == "/api/pilot/v1":
                 payload = {"ok": True, "report": get_pilot_engine_v1_report()}
             elif path == "/api/pilot/v2":
                 payload = {"ok": True, "report": get_pilot_engine_v2_report()}
+            elif path == "/api/pilot/v2/audit":
+                payload = {"ok": True, "report": get_pilot_engine_audit_v2_report()}
             else:
                 payload = {"ok": True, "report": get_pilot_engine_audit_v1_report()}
             self._send(200, payload)
