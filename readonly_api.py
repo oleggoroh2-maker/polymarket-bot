@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import threading
+from pathlib import Path
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -15,6 +16,7 @@ from pilot_engine_v2 import get_pilot_engine_v2_report
 from pilot_engine_audit_v1 import get_pilot_engine_audit_v1_report
 
 logger = logging.getLogger(__name__)
+DASHBOARD_PATH = Path(__file__).with_name("dashboard.html")
 
 
 def _json_safe(value):
@@ -51,6 +53,15 @@ class ReadOnlyAPIHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if path in {"/", "/dashboard"}:
+            raw = DASHBOARD_PATH.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
+            return
         if path not in {"/api/status", "/api/pilot/v1", "/api/pilot/v2", "/api/pilot/audit"}:
             self._send(404, {"ok": False, "error": "not_found"})
             return
@@ -60,7 +71,7 @@ class ReadOnlyAPIHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "service": "polymarket-bot-read-only",
                     "time_utc": datetime.now(timezone.utc).isoformat(),
-                    "endpoints": ["/api/status", "/api/pilot/v1", "/api/pilot/v2", "/api/pilot/audit"],
+                    "endpoints": ["/dashboard", "/api/status", "/api/pilot/v1", "/api/pilot/v2", "/api/pilot/audit"],
                 }
             elif path == "/api/pilot/v1":
                 payload = {"ok": True, "report": get_pilot_engine_v1_report()}
