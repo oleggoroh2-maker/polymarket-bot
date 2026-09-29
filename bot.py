@@ -165,9 +165,9 @@ AUTO_ALERTS = getattr(
 keyboard = ReplyKeyboardMarkup(
     [
         ["🔍 Сканировать", "⭐ Лучшая сделка"],
-        ["📊 Рынок", "🧠 AI"],
-        ["💼 Trading", "⚙️ Настройки"],
-        ["⭐ Мои события", "ℹ Помощь"],
+        ["📊 Рынок", "⭐ Мои события"],
+        ["🔔 Уведомления", "⚙️ Настройки"],
+        ["ℹ Помощь"],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -176,7 +176,6 @@ keyboard = ReplyKeyboardMarkup(
 market_keyboard = ReplyKeyboardMarkup(
     [
         ["📊 ТОП-5", "📈 Статистика"],
-        ["🛡 Cooldown", "🟢 Quality Live"],
         ["⬅️ Главное меню"],
     ],
     resize_keyboard=True,
@@ -1710,6 +1709,12 @@ async def handle_buttons(
             reply_markup=trading_keyboard,
         )
 
+    elif text == "🔔 Уведомления":
+        await update.message.reply_text(
+            "🔔 Управление автоматическими уведомлениями 👇",
+            reply_markup=settings_keyboard,
+        )
+
     elif text == "⚙️ Настройки":
         await update.message.reply_text(
             "⚙️ Настройки бота 👇",
@@ -1954,11 +1959,10 @@ async def handle_buttons(
             "🤖 Управление ботом\n\n"
             "🔍 Сканировать — ручной анализ\n"
             "⭐ Лучшая сделка — лучший рынок\n"
-            "📊 Рынок — ТОП-5, статистика, Cooldown, Quality Live\n"
-            "🧠 AI — AI Memory, Insights, Simulator, Confidence и аналитика\n"
-            "💼 Trading — Paper Trading и Trade v2 Audit\n"
-            "⚙️ Настройки — качество сигналов и уведомления\n"
-            "⭐ Мои события — избранные рынки и заметки\n\n"
+            "📊 Рынок — ТОП-5 и основная статистика\n"
+            "⭐ Мои события — избранные рынки и заметки\n"
+            "🔔 Уведомления — включение и отключение автоуведомлений\n"
+            "⚙️ Настройки — качество сигналов\n\n"
             f"Ваши автоуведомления: {status}",
             reply_markup=keyboard,
         )
