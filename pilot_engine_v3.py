@@ -22,6 +22,9 @@ ACCEL_MIN = 0.95
 ACCEL_MAX = 1.07
 HORIZONS = (180, 360, 720, 1440)
 OPEN_HORIZON_MINUTES = 1440
+# Experiment closed after the first 15 matured 24h outcomes.
+# Keep historical decisions and dashboard reports readable.
+ACCEPT_NEW_DECISIONS = False
 
 def _now(): return datetime.now(timezone.utc)
 def _iso(dt): return dt.isoformat()
@@ -72,6 +75,8 @@ def _risk_reason(c, ts):
     return None
 
 def process_pilot_v3_candidates(candidate_ids=None):
+    if not ACCEPT_NEW_DECISIONS:
+        return 0
     launch=ensure_launch(); added=0
     with closing(get_connection()) as c:
         sql="""SELECT z.candidate_id,z.frozen_at,z.entry_yes,z.early_score,z.acceleration
@@ -103,7 +108,7 @@ def _stats(rows):
     return {'n':len(vals),'roi':sum(rois)/len(rois),'pf':gp/gl if gl else (float('inf') if gp else None),'win':100*sum(r>0 for r in rois)/len(rois),'median':median(rois),'pnl':sum(pnls)}
 
 def get_pilot_engine_v3_report():
-    launch=ensure_launch(); process_pilot_v3_candidates()
+    launch=ensure_launch()
     with closing(get_connection()) as c:
         counts=dict(c.execute("SELECT action,COUNT(*) FROM pilot_engine_v3_decisions WHERE version=? GROUP BY action",(VERSION,)).fetchall())
         reasons=c.execute("SELECT reason,COUNT(*) FROM pilot_engine_v3_decisions WHERE version=? AND action='SKIP' GROUP BY reason ORDER BY COUNT(*) DESC",(VERSION,)).fetchall()
