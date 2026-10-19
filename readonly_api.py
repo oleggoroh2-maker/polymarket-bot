@@ -28,6 +28,7 @@ from pilot_oos_review_v3 import get_pilot_oos_review_v2_report as get_pilot_oos_
 from pilot_oos_summary_v1 import get_pilot_oos_summary_v1_report
 from pilot_stability_audit_v1 import get_pilot_stability_audit_v1_report
 from pilot_market_regime_audit_v1 import get_pilot_market_regime_audit_v1_report
+from pilot_market_regime_audit_v2 import report as get_market_context_v2_report
 
 logger = logging.getLogger(__name__)
 DASHBOARD_PATH = Path(__file__).with_name("dashboard.html")
@@ -209,6 +210,8 @@ class ReadOnlyAPIHandler(BaseHTTPRequestHandler):
                 payload = {"ok": True, "report": get_pilot_oos_summary_v1_report()}
             elif path == "/api/pilot/v2/stability":
                 payload = {"ok": True, "report": get_pilot_stability_audit_v1_report()}
+            elif path == "/api/pilot/v2/market-context-v2":
+                payload = {"ok": True, "report": get_market_context_v2_report()}
             elif path == "/api/pilot/v2/market-regime":
                 payload = {"ok": True, "report": get_pilot_market_regime_audit_v1_report()}
             elif path == "/api/pilot/v3":
