@@ -27,6 +27,7 @@ from pilot_oos_review_v2 import get_pilot_oos_review_v2_report
 from pilot_oos_review_v3 import get_pilot_oos_review_v2_report as get_pilot_oos_review_v3_report
 from pilot_oos_summary_v1 import get_pilot_oos_summary_v1_report
 from pilot_stability_audit_v1 import get_pilot_stability_audit_v1_report
+from pilot_market_regime_audit_v1 import get_pilot_market_regime_audit_v1_report
 
 logger = logging.getLogger(__name__)
 DASHBOARD_PATH = Path(__file__).with_name("dashboard.html")
@@ -179,7 +180,7 @@ class ReadOnlyAPIHandler(BaseHTTPRequestHandler):
                 logger.exception("Public Pilot v2 JSON feed failed")
                 self._send(500, {"ok": False, "error": type(exc).__name__, "message": str(exc)})
             return
-        if path not in {"/api/status", "/api/pilot/v1", "/api/pilot/v2", "/api/pilot/audit", "/api/pilot/v2/audit", "/api/pilot/v2/exit-audit", "/api/pilot/v2/oos-review", "/api/pilot/v2/oos-review-2", "/api/pilot/v2/oos-review-3", "/api/pilot/v2/oos-summary", "/api/pilot/v3", "/api/pilot/v2/stability"}:
+        if path not in {"/api/status", "/api/pilot/v1", "/api/pilot/v2", "/api/pilot/audit", "/api/pilot/v2/audit", "/api/pilot/v2/exit-audit", "/api/pilot/v2/oos-review", "/api/pilot/v2/oos-review-2", "/api/pilot/v2/oos-review-3", "/api/pilot/v2/oos-summary", "/api/pilot/v3", "/api/pilot/v2/stability", "/api/pilot/v2/market-regime"}:
             self._send(404, {"ok": False, "error": "not_found"})
             return
         try:
@@ -188,7 +189,7 @@ class ReadOnlyAPIHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "service": "polymarket-bot-read-only",
                     "time_utc": datetime.now(timezone.utc).isoformat(),
-                    "endpoints": ["/dashboard", "/pilot-v2.txt", "/pilot-v2.json", "/api/status", "/api/pilot/v1", "/api/pilot/v2", "/api/pilot/audit", "/api/pilot/v2/audit", "/api/pilot/v2/exit-audit", "/api/pilot/v2/oos-review", "/api/pilot/v2/oos-review-2", "/api/pilot/v2/oos-review-3", "/api/pilot/v2/oos-summary", "/api/pilot/v3", "/api/pilot/v2/stability"],
+                    "endpoints": ["/dashboard", "/pilot-v2.txt", "/pilot-v2.json", "/api/status", "/api/pilot/v1", "/api/pilot/v2", "/api/pilot/audit", "/api/pilot/v2/audit", "/api/pilot/v2/exit-audit", "/api/pilot/v2/oos-review", "/api/pilot/v2/oos-review-2", "/api/pilot/v2/oos-review-3", "/api/pilot/v2/oos-summary", "/api/pilot/v3", "/api/pilot/v2/stability", "/api/pilot/v2/market-regime"],
                 }
             elif path == "/api/pilot/v1":
                 payload = {"ok": True, "report": get_pilot_engine_v1_report()}
@@ -208,6 +209,8 @@ class ReadOnlyAPIHandler(BaseHTTPRequestHandler):
                 payload = {"ok": True, "report": get_pilot_oos_summary_v1_report()}
             elif path == "/api/pilot/v2/stability":
                 payload = {"ok": True, "report": get_pilot_stability_audit_v1_report()}
+            elif path == "/api/pilot/v2/market-regime":
+                payload = {"ok": True, "report": get_pilot_market_regime_audit_v1_report()}
             elif path == "/api/pilot/v3":
                 payload = {"ok": True, "report": get_pilot_engine_v3_report()}
             else:
