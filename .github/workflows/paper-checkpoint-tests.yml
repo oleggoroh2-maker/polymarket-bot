@@ -1,0 +1,29 @@
+name: PAPER checkpoint audit tests
+
+on:
+  pull_request:
+    paths:
+      - "paper_checkpoint_quality.py"
+      - "pilot_checkpoint_quality.py"
+      - "pilot_live_readonly_report.py"
+      - "tests/test_pilot_live_readonly_report.py"
+      - "tests/test_paper_checkpoint_quality.py"
+      - "tests/test_pilot_checkpoint_quality.py"
+      - ".github/workflows/paper-checkpoint-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test checkpoint timing audit
+        run: python -m unittest discover -s tests -p 'test_*checkpoint_quality.py' -v
+      - name: Test read-only live report
+        run: python -m unittest discover -s tests -p 'test_pilot_live_readonly_report.py' -v
