@@ -49,7 +49,22 @@ def analyze(path):
                 "SELECT COUNT(*) FROM " + table + " WHERE version=? AND action='TRADE'",
                 (version,),
             ).fetchone()[0]
-            result["strategies"][name] = {"decisions": counts, "trades": trades, "horizons": {}}
+            decision_rows = conn.execute(
+                "SELECT d.decided_at,e.opened_at FROM " + table + " d "
+                "JOIN entry_discovery_candidates e ON e.id=d.candidate_id "
+                "WHERE d.version=? AND d.action='TRADE'", (version,)
+            ).fetchall()
+            decision_lags = [(utc(decided).timestamp() - utc(opened).timestamp()) / 60
+                             for decided, opened in decision_rows]
+            result["strategies"][name] = {
+                "decisions": counts, "trades": trades,
+                "decision_vs_discovery_minutes": {
+                    "mean": round(sum(decision_lags) / len(decision_lags), 2) if decision_lags else None,
+                    "min": round(min(decision_lags), 2) if decision_lags else None,
+                    "max": round(max(decision_lags), 2) if decision_lags else None,
+                },
+                "horizons": {},
+            }
             for horizon in HORIZONS:
                 # row-level candidate identifiers deliberately not included in report
                 # Each TRADE has one row per outcome, or a single null row if none.
