@@ -58,34 +58,22 @@ async function loadV4Review(){
 async function loadPaperQuality(){
  current='paperquality';
  document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.id==='paperquality'));
- try {
+ try{
   const response=await fetch('/api/pilot/paper-quality',{cache:'no-store'});
-  const body=await response.json();
-  if(!body.ok)throw Error(body.message||body.error||'API unavailable');
-  const report=body.report;
-  const fmt=(v,d=2)=>v==null?'—':v==='Infinity'?'∞':Number(v).toFixed(d);
-  let html='<div class="card"><b>PAPER v2/v4 · READ-ONLY</b><p>Only checkpoints measured 0–15 minutes after target count toward performance. PnL is hypothetical PAPER.</p></div>';
+  const j=await response.json();
+  if(!j.ok)throw Error(j.message||j.error);
+  const fmt=x=>x==null?'—':Number(x).toFixed(2);
+  let out='<h3>PAPER Quality · v2/v4</h3><p class="muted">Only on-time measurements (0–15 min) count toward performance. Hypothetical PAPER PnL.</p>';
   for(const key of ['v2','v4']){
-   const x=report.strategies[key],lag=x.decision_vs_discovery_minutes||{};
-   html+='<h3 class="sec">'+key.toUpperCase()+' · '+x.trades+' trades · mean decision/discovery lag '+fmt(lag.mean,1)+' min</h3>';
-   html+='<div class="tw"><table><tr><th>Horizon</th><th>Due</th><th>On time</th><th>Early</th><th>Late</th><th>Missing</th><th>ROI</th><th>PF</th><th>Win</th><th>PnL</th></tr>';
+   const x=j.report.strategies[key];
+   out+='<h3>'+key.toUpperCase()+' · '+x.trades+' trades</h3><div class="tw"><table><tr><th>Hours</th><th>On time</th><th>Late</th><th>ROI</th><th>PF</th><th>Win</th><th>PnL</th></tr>';
    for(const t of [180,360,720,1440]){
     const h=x.horizons[t],q=h.on_time_only;
-    html+='<tr><td>'+t/60+'h</td><td>'+h.due+'</td><td>'+q.n+'</td><td>'+h.early+'</td><td>'+h.late_over_15m+'</td><td>'+h.missing+'</td><td>'+fmt(q.mean_roi_pct)+'%</td><td>'+fmt(q.profit_factor)+'</td><td>'+fmt(q.win_rate_pct,1)+'%</td><td>['v2','v3','v4','v1'],analytics:['paperquality','auditv2','exitaudit','stability','v4review'],filters:['marketregime','categoryfilter','contextv2'],history:['oosreview','oosreview2','oosreview3','oossummary']};
-function showGroup(group){
- if(!navGroups[group])return;
- document.querySelectorAll('.nav-groups button').forEach(b=>{const selected=b.dataset.group===group;b.classList.toggle('on',selected);b.setAttribute('aria-pressed',String(selected))});
- document.querySelectorAll('.tabs button').forEach(b=>{b.hidden=!navGroups[group].includes(b.id)});
- const selected=document.querySelector('.tabs button.on');
- if(!selected||selected.hidden){const first=document.getElementById(navGroups[group][0]);if(first)first.click()}
-}
-showGroup('strategies');
-</script></body></html>
-+fmt(q.pnl_usd)+'</td></tr>';
+    out+='<tr><td>'+t/60+'</td><td>'+q.n+'</td><td>'+h.late_over_15m+'</td><td>'+fmt(q.mean_roi_pct)+'%</td><td>'+fmt(q.profit_factor)+'</td><td>'+fmt(q.win_rate_pct)+'%</td><td>$'+fmt(q.pnl_usd)+'</td></tr>';
    }
-   html+='</table></div>';
+   out+='</table></div>';
   }
-  document.getElementById('app').innerHTML=html;
+  document.getElementById('app').innerHTML=out;
   document.getElementById('upd').textContent='Updated '+new Date().toLocaleTimeString();
  }catch(e){document.getElementById('app').textContent='PAPER quality unavailable: '+e.message}
 }
