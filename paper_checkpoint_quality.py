@@ -63,12 +63,16 @@ def audit_database(db_path, now=None):
     path = Path(db_path).resolve(strict=True)
     uri = path.as_uri() + "?mode=ro"
     with closing(sqlite3.connect(uri, uri=True)) as conn:
+        conn.execute("PRAGMA query_only=ON")
         candidates = conn.execute(
-            "SELECT id, opened_at FROM entry_discovery_candidates WHERE version = ?"
+            "SELECT id, opened_at FROM entry_discovery_candidates WHERE version = ?",
+            ("v1-early-entry",)
         ).fetchall()
         outcomes = conn.execute(
             "SELECT candidate_id, checkpoint_minutes, measured_at "
-            "FROM entry_discovery_outcomes"
+            "FROM entry_discovery_outcomes WHERE candidate_id IN "
+            "(SELECT id FROM entry_discovery_candidates WHERE version = ?)",
+            ("v1-early-entry",)
         ).fetchall()
     return audit_checkpoint_rows(candidates, outcomes, now=now)
 
