@@ -51,8 +51,6 @@ def analyze(path):
             ).fetchone()[0]
             result["strategies"][name] = {"decisions": counts, "trades": trades, "horizons": {}}
             for horizon in HORIZONS:
-                eligible_ids = set()
-                observed = []
                 # row-level candidate identifiers deliberately not included in report
                 # Each TRADE has one row per outcome, or a single null row if none.
                 eligible = conn.execute(
@@ -66,6 +64,8 @@ def analyze(path):
                 early = late = on_time = 0
                 gains = losses = pnl = 0.0
                 matured = wins = 0
+                clean_gains = clean_losses = clean_pnl = clean_roi = 0.0
+                clean_n = clean_wins = 0
                 for opened, cp, measured, roi, stake in rows:
                     if cp != horizon or measured is None:
                         continue
@@ -80,6 +80,13 @@ def analyze(path):
                         late += 1
                     else:
                         on_time += 1
+                        clean_n += 1
+                        clean_roi += float(roi)
+                        clean_profit = float(stake) * float(roi) / 100
+                        clean_pnl += clean_profit
+                        clean_gains += max(clean_profit, 0)
+                        clean_losses += max(-clean_profit, 0)
+                        clean_wins += clean_profit > 0
                     profit = float(stake) * float(roi) / 100
                     pnl += profit
                     gains += max(profit, 0)
@@ -92,7 +99,14 @@ def analyze(path):
                     "early": early, "on_time_0_to_15m": on_time,
                     "late_over_15m": late,
                     "max_delay_minutes": round(max(delays), 1) if delays else None,
-                    "pnl_usd": round(pnl, 2),
+                    "pnl_usd": round(pnl, 2),  # all recorded, including late: diagnostic only
+                    "on_time_only": {
+                        "n": clean_n,
+                        "pnl_usd": round(clean_pnl, 2),
+                        "mean_roi_pct": round(clean_roi / clean_n, 3) if clean_n else None,
+                        "win_rate_pct": round(100 * clean_wins / clean_n, 1) if clean_n else None,
+                        "profit_factor": round(clean_gains / clean_losses, 3) if clean_losses else ("infinite" if clean_gains else None),
+                    },
                     "win_rate_pct": round(100 * wins / matured, 1) if matured else None,
                     "profit_factor": round(gains / losses, 3) if losses else ("infinite" if gains else None),
                 }
