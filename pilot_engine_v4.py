@@ -25,7 +25,7 @@ ACCEL_MAX = 1.07
 HORIZONS = (180, 360, 720, 1440)
 OPEN_HORIZON_MINUTES = 1440
 ACCEPT_NEW_DECISIONS = True
-TARGET_MATURED = 30
+TARGET_MATURED = 100
 
 def _now(): return datetime.now(timezone.utc)
 def _iso(dt): return dt.isoformat()
