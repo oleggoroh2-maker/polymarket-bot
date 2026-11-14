@@ -16,17 +16,17 @@ class LiveReportTests(unittest.TestCase):
             conn.execute("CREATE TABLE entry_discovery_candidates(id INTEGER PRIMARY KEY, opened_at TEXT)")
             conn.execute("CREATE TABLE entry_discovery_outcomes(candidate_id INTEGER, checkpoint_minutes INTEGER, measured_at TEXT, roi REAL)")
             for table in ("pilot_engine_v2_decisions", "pilot_engine_v4_decisions"):
-                conn.execute(f"CREATE TABLE {table}(candidate_id INTEGER, version TEXT, action TEXT, stake REAL)")
+                conn.execute(f"CREATE TABLE {table}(candidate_id INTEGER, version TEXT, action TEXT, stake REAL, decided_at TEXT)")
             now = datetime.now(timezone.utc)
             opened = now - timedelta(hours=5)
             conn.executemany("INSERT INTO entry_discovery_candidates VALUES (?,?)",
                              [(1, opened.isoformat()), (2, opened.isoformat()), (3, opened.isoformat())])
-            conn.executemany("INSERT INTO pilot_engine_v2_decisions VALUES (?,?,?,?)",
-                             [(1, "v2-pilot-engine", "TRADE", 20),
-                              (2, "wrong-version", "TRADE", 20),
-                              (3, "v2-pilot-engine", "SKIP", 0)])
+            conn.executemany("INSERT INTO pilot_engine_v2_decisions VALUES (?,?,?,?,?)",
+                             [(1, "v2-pilot-engine", "TRADE", 20, opened.isoformat()),
+                              (2, "wrong-version", "TRADE", 20, opened.isoformat()),
+                              (3, "v2-pilot-engine", "SKIP", 0, opened.isoformat())])
             conn.execute("INSERT INTO pilot_engine_v4_decisions VALUES (?,?,?,?)",
-                         (2, "v4-category-filter-future-only", "TRADE", 20))
+                         (2, "v4-category-filter-future-only", "TRADE", 20, opened.isoformat()))
             conn.executemany("INSERT INTO entry_discovery_outcomes VALUES (?,?,?,?)",
                              [(1, 180, (opened + timedelta(minutes=190)).isoformat(), 10),
                               (2, 180, (opened + timedelta(minutes=220)).isoformat(), -5)])
@@ -37,6 +37,7 @@ class LiveReportTests(unittest.TestCase):
             self.assertEqual(result["strategies"]["v4"]["trades"], 1)
             v2 = result["strategies"]["v2"]["horizons"]["180"]
             v4 = result["strategies"]["v4"]["horizons"]["180"]
+            self.assertEqual(result["strategies"]["v2"]["decision_vs_discovery_minutes"]["mean"], 0.0)
             self.assertEqual(v2["due"], 1)
             self.assertEqual(v2["recorded"], 1)
             self.assertEqual(v2["on_time_0_to_15m"], 1)
