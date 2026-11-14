@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-CHECKPOINTS = (180, 360, 720, 1440)
+CHECKPOINTS = (60, 180, 360, 720, 1440)
+GRACE_MINUTES = 15
 
 
 def _datetime(value):
@@ -17,7 +18,7 @@ def _datetime(value):
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
-def audit_checkpoint_rows(candidates, outcomes, now=None, checkpoints=CHECKPOINTS):
+def audit_checkpoint_rows(candidates, outcomes, now=None, checkpoints=CHECKPOINTS, grace_minutes=GRACE_MINUTES):
     """Return timing quality by horizon, without interpreting ROI as executable PnL.
 
     candidates: iterable of (candidate_id, opened_at).
@@ -42,7 +43,7 @@ def audit_checkpoint_rows(candidates, outcomes, now=None, checkpoints=CHECKPOINT
             stats["recorded"] += 1
             lag = (stamp.timestamp() - target) / 60
             delays.append(lag)
-            if lag > 0:
+            if lag > grace_minutes:
                 stats["delayed"] += 1
             else:
                 stats["on_time"] += 1
@@ -54,12 +55,16 @@ def audit_checkpoint_rows(candidates, outcomes, now=None, checkpoints=CHECKPOINT
 
 
 def audit_database(db_path, now=None):
-    """Open SQLite in immutable read-only mode; never create files or enable WAL."""
+    """Read an offline, consistent SQLite snapshot without writing to it.
+
+    Do not point this at a live Railway database: copy it with SQLite backup first.
+    mode=ro (not immutable=1) preserves visibility of a snapshot WAL if present.
+    """
     path = Path(db_path).resolve(strict=True)
-    uri = path.as_uri() + "?mode=ro&immutable=1"
+    uri = path.as_uri() + "?mode=ro"
     with closing(sqlite3.connect(uri, uri=True)) as conn:
         candidates = conn.execute(
-            "SELECT id, opened_at FROM entry_discovery_candidates"
+            "SELECT id, opened_at FROM entry_discovery_candidates WHERE version = ?"
         ).fetchall()
         outcomes = conn.execute(
             "SELECT candidate_id, checkpoint_minutes, measured_at "
@@ -72,6 +77,6 @@ if __name__ == "__main__":
     import argparse
     import json
     parser = argparse.ArgumentParser(description="Read-only PAPER checkpoint timing audit")
-    parser.add_argument("database", help="Path to a stopped/consistent SQLite snapshot")
+    parser.add_argument("database", help="Path to an offline, consistent SQLite snapshot")
     args = parser.parse_args()
     print(json.dumps(audit_database(args.database), indent=2))
