@@ -43,6 +43,12 @@ class LiveReportTests(unittest.TestCase):
             self.assertEqual(v2["pnl_usd"], 2.0)
             self.assertEqual(v4["late_over_15m"], 1)
             self.assertEqual(v4["pnl_usd"], -1.0)
+            self.assertEqual(v2["on_time_only"]["n"], 1)
+            self.assertEqual(v2["on_time_only"]["pnl_usd"], 2.0)
+            self.assertEqual(v2["on_time_only"]["mean_roi_pct"], 10.0)
+            self.assertEqual(v2["on_time_only"]["win_rate_pct"], 100.0)
+            self.assertEqual(v4["on_time_only"]["n"], 0)
+            self.assertEqual(v4["on_time_only"]["pnl_usd"], 0.0)
             self.assertEqual(conn.total_changes, before)
             conn.close()
 
