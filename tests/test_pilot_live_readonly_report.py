@@ -25,7 +25,7 @@ class LiveReportTests(unittest.TestCase):
                              [(1, "v2-pilot-engine", "TRADE", 20, opened.isoformat()),
                               (2, "wrong-version", "TRADE", 20, opened.isoformat()),
                               (3, "v2-pilot-engine", "SKIP", 0, opened.isoformat())])
-            conn.execute("INSERT INTO pilot_engine_v4_decisions VALUES (?,?,?,?)",
+            conn.execute("INSERT INTO pilot_engine_v4_decisions VALUES (?,?,?,?,?)",
                          (2, "v4-category-filter-future-only", "TRADE", 20, opened.isoformat()))
             conn.executemany("INSERT INTO entry_discovery_outcomes VALUES (?,?,?,?)",
                              [(1, 180, (opened + timedelta(minutes=190)).isoformat(), 10),
