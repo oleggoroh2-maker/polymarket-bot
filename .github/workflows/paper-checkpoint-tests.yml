@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - "paper_checkpoint_quality.py"
+      - "pilot_checkpoint_quality.py"
       - "tests/test_paper_checkpoint_quality.py"
+      - "tests/test_pilot_checkpoint_quality.py"
       - ".github/workflows/paper-checkpoint-tests.yml"
   workflow_dispatch:
 
@@ -20,4 +22,4 @@ jobs:
         with:
           python-version: "3.11"
       - name: Test checkpoint timing audit
-        run: python -m unittest discover -s tests -p 'test_paper_checkpoint_quality.py' -v
+        run: python -m unittest discover -s tests -p 'test_*checkpoint_quality.py' -v
