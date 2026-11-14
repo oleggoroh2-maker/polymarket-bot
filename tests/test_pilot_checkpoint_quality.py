@@ -14,13 +14,13 @@ class PilotAuditTests(unittest.TestCase):
                 conn.executescript("""
                 CREATE TABLE entry_discovery_candidates(id INTEGER PRIMARY KEY, opened_at TEXT);
                 CREATE TABLE entry_discovery_outcomes(candidate_id INTEGER, checkpoint_minutes INTEGER, measured_at TEXT);
-                CREATE TABLE pilot_engine_v2_decisions(candidate_id INTEGER, action TEXT);
-                CREATE TABLE pilot_engine_v4_decisions(candidate_id INTEGER, action TEXT);
+                CREATE TABLE pilot_engine_v2_decisions(candidate_id INTEGER, action TEXT, version TEXT);
+                CREATE TABLE pilot_engine_v4_decisions(candidate_id INTEGER, action TEXT, version TEXT);
                 INSERT INTO entry_discovery_candidates VALUES (1,'2026-01-01T00:00:00+00:00');
                 INSERT INTO entry_discovery_candidates VALUES (2,'2026-01-01T00:00:00+00:00');
-                INSERT INTO pilot_engine_v2_decisions VALUES (1,'TRADE');
-                INSERT INTO pilot_engine_v2_decisions VALUES (2,'SKIP');
-                INSERT INTO pilot_engine_v4_decisions VALUES (2,'TRADE');
+                INSERT INTO pilot_engine_v2_decisions VALUES (1,'TRADE','v2-pilot-engine');
+                INSERT INTO pilot_engine_v2_decisions VALUES (2,'SKIP','v2-pilot-engine');
+                INSERT INTO pilot_engine_v4_decisions VALUES (2,'TRADE','v4-category-filter-future-only');
                 INSERT INTO entry_discovery_outcomes VALUES (1,180,'2026-01-01T03:30:00+00:00');
                 """)
             result = audit_pilot_database(db, now="2026-01-03T00:00:00+00:00")
